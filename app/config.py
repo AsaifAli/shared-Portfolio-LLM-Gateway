@@ -23,6 +23,52 @@ DEFAULT_MODELS = [
 ]
 
 
+SUPPORTED_PROVIDERS = {
+    "openai": "OpenAI",
+    "google": "Google Gemini",
+    "anthropic": "Anthropic",
+    "openrouter": "OpenRouter",
+}
+
+
+def normalize_user_model(provider: str, model_id: str) -> str:
+    """Normalize a user-selected model into a LiteLLM provider/model identifier."""
+    provider = provider.strip().lower()
+    model_id = model_id.strip()
+    if provider not in SUPPORTED_PROVIDERS:
+        raise ValueError("Unsupported LLM provider")
+    if not model_id or len(model_id) > 200:
+        raise ValueError("Invalid model identifier")
+    if any(ch in model_id for ch in ("\n", "\r", "\t")):
+        raise ValueError("Invalid model identifier")
+    if model_id.startswith(("http://", "https://")):
+        raise ValueError("Model identifier must not contain a URL")
+
+    prefix = {
+        "openai": "openai/",
+        "google": "gemini/",
+        "anthropic": "anthropic/",
+        "openrouter": "openrouter/",
+    }[provider]
+    if model_id.startswith(prefix):
+        return model_id
+    # OpenRouter takes the provider-qualified upstream model ID, e.g.
+    # openrouter + openai/gpt-oss-20b:free -> openrouter/openai/gpt-oss-20b:free
+    return f"{prefix}{model_id}"
+
+
+def model_config_for_user(provider: str, model_id: str) -> ModelConfig:
+    provider = provider.strip().lower()
+    normalized = normalize_user_model(provider, model_id)
+    return ModelConfig(
+        id=model_id.strip(),
+        provider=provider,
+        litellm_model=normalized,
+        recommended=False,
+        label=f"{SUPPORTED_PROVIDERS[provider]} custom model",
+    )
+
+
 class Settings:
     def __init__(self) -> None:
         self.app_name = os.getenv("APP_NAME", "Portfolio LLM Gateway")

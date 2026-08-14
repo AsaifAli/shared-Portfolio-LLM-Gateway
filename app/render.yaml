@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: portfolio-llm-gateway
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeployTrigger: checksPass
+    healthCheckPath: /healthz

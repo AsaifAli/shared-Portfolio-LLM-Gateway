@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .config import model_config_for_user, settings
+from .config import settings
 from .llm import ProviderError, complete, stream
 from .models import (
     ChatCompletionRequest,
@@ -74,10 +74,11 @@ async def models() -> dict[str, list[dict[str, object]]]:
 @app.post("/v1/demo/session", response_model=SessionCreateResponse)
 async def create_session(payload: SessionCreateRequest, request: Request) -> SessionCreateResponse:
     await enforce_session_create_rate_limit(request.client.host if request.client else "unknown")
-    try:
-        model_cfg = model_config_for_user(payload.provider, payload.model)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    model_cfg = settings.models.get(payload.model)
+    if model_cfg is None:
+        raise HTTPException(status_code=400, detail="Model is not allowed by this gateway")
+    if model_cfg.provider != payload.provider:
+        raise HTTPException(status_code=400, detail="Provider does not match the selected model")
 
     api_key = payload.api_key
     if not api_key:
@@ -127,16 +128,15 @@ async def chat_completions(payload: ChatCompletionRequest, request: Request):
             pass
 
     session = await load_session_from_request(request)
-    await enforce_rate_limit(session["sid"], request.client.host if request.client else "unknown")
+    await enforce_rate_limit(session["sid"], request.client.host if request.client else "unknown", session.get("project", ""))
 
     # The session is authoritative for provider/model selection. Clients may
     # send any OpenAI-compatible model label (or omit it); the gateway maps
     # the request to the allowlisted model chosen when the session was created.
     model_id = session["model"]
-    try:
-        model_cfg = model_config_for_user(session["provider"], model_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    model_cfg = settings.models.get(model_id)
+    if model_cfg is None or model_cfg.provider != session["provider"]:
+        raise HTTPException(status_code=400, detail="Session model is not allowed")
 
     api_key = decrypt_secret(session["credential"])
     body = payload.model_dump(exclude_none=True)

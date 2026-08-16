@@ -149,10 +149,16 @@ async def enforce_session_create_rate_limit(client_ip: str) -> None:
         raise HTTPException(status_code=429, detail="Too many demo sessions. Please wait a minute and retry.")
 
 
-async def enforce_rate_limit(session_id: str, client_ip: str) -> None:
+async def enforce_rate_limit(session_id: str, client_ip: str, project: str = "") -> None:
     minute_bucket = int(time.time() // 60)
+    session_limit = settings.max_requests_per_minute
+    # Agentic workflows legitimately make many sequential completion calls.
+    # Give LegacyLens a bounded burst allowance without removing rate limiting
+    # for ordinary interactive sessions.
+    if project.strip().lower() in {"legacylens", "ai-code-modernization", "ai code modernization"}:
+        session_limit = max(session_limit, 60)
     session_count = await store.incr_with_ttl(f"llm:rl:s:{session_id}:{minute_bucket}", 65)
     ip_digest = hashlib.sha256(client_ip.encode()).hexdigest()[:16]
     ip_count = await store.incr_with_ttl(f"llm:rl:i:{ip_digest}:{minute_bucket}", 65)
-    if session_count > settings.max_requests_per_minute or ip_count > settings.max_requests_per_minute * 2:
+    if session_count > session_limit or ip_count > session_limit * 2:
         raise HTTPException(status_code=429, detail="Demo rate limit reached. Please wait a minute and retry.")

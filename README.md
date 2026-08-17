@@ -1,6 +1,6 @@
 # Portfolio LLM Gateway
 
-A shared LLM inference gateway that lets multiple AI applications consume OpenAI, Gemini, Anthropic, and OpenRouter models through a unified OpenAI-compatible interface, with temporary BYOK sessions and centralized controls.
+Shared provider-agnostic inference gateway for the portfolio's five AI projects.
 
 ## Design
 

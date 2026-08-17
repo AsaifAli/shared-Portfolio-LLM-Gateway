@@ -23,6 +23,52 @@ DEFAULT_MODELS = [
 ]
 
 
+SUPPORTED_PROVIDERS = {
+    "openai": "OpenAI",
+    "google": "Google Gemini",
+    "anthropic": "Anthropic",
+    "openrouter": "OpenRouter",
+}
+
+
+def normalize_user_model(provider: str, model_id: str) -> str:
+    """Normalize a user-selected model into a LiteLLM provider/model identifier."""
+    provider = provider.strip().lower()
+    model_id = model_id.strip()
+    if provider not in SUPPORTED_PROVIDERS:
+        raise ValueError("Unsupported LLM provider")
+    if not model_id or len(model_id) > 200:
+        raise ValueError("Invalid model identifier")
+    if any(ch in model_id for ch in ("\n", "\r", "\t")):
+        raise ValueError("Invalid model identifier")
+    if model_id.startswith(("http://", "https://")):
+        raise ValueError("Model identifier must not contain a URL")
+
+    prefix = {
+        "openai": "openai/",
+        "google": "gemini/",
+        "anthropic": "anthropic/",
+        "openrouter": "openrouter/",
+    }[provider]
+    if model_id.startswith(prefix):
+        return model_id
+    # OpenRouter takes the provider-qualified upstream model ID, e.g.
+    # openrouter + openai/gpt-oss-20b:free -> openrouter/openai/gpt-oss-20b:free
+    return f"{prefix}{model_id}"
+
+
+def model_config_for_user(provider: str, model_id: str) -> ModelConfig:
+    provider = provider.strip().lower()
+    normalized = normalize_user_model(provider, model_id)
+    return ModelConfig(
+        id=model_id.strip(),
+        provider=provider,
+        litellm_model=normalized,
+        recommended=False,
+        label=f"{SUPPORTED_PROVIDERS[provider]} custom model",
+    )
+
+
 class Settings:
     def __init__(self) -> None:
         self.app_name = os.getenv("APP_NAME", "Portfolio LLM Gateway")
@@ -35,7 +81,7 @@ class Settings:
         self.admin_token = os.getenv("GATEWAY_ADMIN_TOKEN", "")
 
         self.session_ttl_seconds = int(os.getenv("SESSION_TTL_SECONDS", "1800"))
-        self.max_requests_per_minute = int(os.getenv("MAX_REQUESTS_PER_MINUTE", "60"))
+        self.max_requests_per_minute = int(os.getenv("MAX_REQUESTS_PER_MINUTE", "12"))
         self.max_session_creates_per_minute = int(os.getenv("MAX_SESSION_CREATES_PER_MINUTE", "6"))
         self.max_input_bytes = int(os.getenv("MAX_INPUT_BYTES", str(1024 * 1024)))
         self.max_output_tokens = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))

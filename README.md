@@ -1,21 +1,63 @@
 # Portfolio LLM Gateway
 
-Shared provider-agnostic inference gateway for the portfolio's five AI projects.
+Shared provider-agnostic inference gateway for the portfolio's interactive AI projects.
 
-## Design
+The gateway provides a single OpenAI-compatible endpoint while keeping each user's provider credentials outside the client application and outside the project repositories.
 
-- OpenAI-compatible `POST /v1/chat/completions` endpoint.
-- Multi-provider routing through LiteLLM.
-- User/provider credentials are encrypted before temporary storage.
-- Upstash Redis stores session state with TTL.
-- JWT contains session claims only; it never contains the provider API key.
-- Per-session/IP rate limiting.
-- Server-side model allowlist.
-- Optional controlled fallback using the portfolio owner's own provider key.
+## Architecture
 
-LiteLLM provides the common input/output format across 100+ providers and can be used as a centralized gateway layer. Upstash Redis is suitable for stateless/HTTP deployments and session storage. See the linked official docs cited in the implementation notes.
+```text
+Portfolio
+   │
+   │  create BYOK session
+   ▼
+Gateway
+   │
+   ├── encrypt provider credential
+   ├── store short-lived session in Redis
+   └── issue temporary JWT
+   │
+   ▼
+Interactive Project
+   │
+   │ Authorization: Bearer <session JWT>
+   ▼
+POST /v1/chat/completions
+   │
+   ▼
+Gateway resolves session
+   │
+   ▼
+LiteLLM / provider adapter
+   │
+   ▼
+User-selected provider/model
+```
 
-## Production environment
+The JWT contains session claims only. The provider API key is never placed in the JWT, URL, browser storage, or project source code.
+
+## Projects using the gateway
+
+The portfolio currently routes BYOK sessions to:
+
+- QuoteSense — quotation analysis
+- WebQA — web application QA intelligence
+- FlowPilot — AI automation workflows
+- EvidenceFlow — verified RAG / research
+- LegacyLens — software modernization
+
+## Core capabilities
+
+- OpenAI-compatible `POST /v1/chat/completions`
+- Multi-provider routing through LiteLLM
+- Encrypted provider credentials
+- Upstash Redis session storage with TTL
+- Short-lived JWT authentication
+- Per-session / IP rate limiting
+- Server-side model allowlist
+- Optional controlled fallback using the portfolio owner's own provider key
+
+## Production configuration
 
 Required:
 
@@ -50,16 +92,38 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 ## API flow
 
-1. Frontend calls `POST /v1/demo/session` with provider, approved model id, and the user's provider API key.
-2. Gateway encrypts the credential, stores the session in Redis with a TTL, and returns a short-lived JWT.
-3. Project backend calls `POST /v1/chat/completions` with `Authorization: Bearer <session JWT>`.
-4. Gateway resolves the session, decrypts the provider credential in memory, and calls LiteLLM.
-5. Session expires automatically; the credential is deleted from Redis.
-
-## Important integration note
-
-The five projects still need a tiny request-scoped integration step for true BYOK sessions: the user's JWT must reach the project's LLM client for each request. Merely changing a static `LLM_API_KEY` environment variable is not enough for multiple simultaneous interviewers. The gateway itself is ready for that integration, but project-by-project propagation should be done deliberately and tested before exposing the interactive demos.
+1. The portfolio calls the session endpoint with the selected provider, allowed model, and user's provider API key.
+2. The gateway encrypts the credential and stores the temporary session in Redis.
+3. The gateway returns a short-lived JWT.
+4. The selected project forwards the JWT to this gateway for each inference request.
+5. The gateway resolves the session, decrypts the provider credential in memory, and calls the configured provider through LiteLLM.
+6. Expiration or revocation removes access to the provider credential.
 
 ## Security rules
 
-Never log provider API keys. Never put them in JWTs, URLs, Wix CMS, browser localStorage, or ordinary Postgres columns. Use HTTPS in production. Keep the gateway model list server-side and allowlist models explicitly.
+Never:
+
+- log provider API keys
+- place provider API keys in JWTs
+- place provider keys in URLs
+- store provider keys in browser localStorage
+- expose provider credentials to project frontends
+- commit `.env` or production secrets
+
+Use HTTPS in production and keep the model allowlist server-side.
+
+## Health and observability
+
+The gateway exposes application health/readiness endpoints through FastAPI. Deployment and runtime logs should never contain raw provider credentials.
+
+## Testing
+
+Run the repository's configured lint, test, and compile checks before deployment. Integration testing should cover session creation, expiration, authorization failure, provider routing, and request-scoped project handoff.
+
+## Portfolio boundary
+
+This service is the shared infrastructure layer for the portfolio demos. It is designed to demonstrate secure request-scoped BYOK routing and provider abstraction for a portfolio environment; multi-tenant enterprise identity, centralized billing, and enterprise policy management remain outside the current scope.
+
+## License
+
+MIT License.

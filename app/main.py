@@ -24,6 +24,7 @@ from .security import (
     enforce_rate_limit,
     enforce_session_create_rate_limit,
     load_session_from_request,
+    decode_jwt,
     new_session_id,
     store,
 )
@@ -108,6 +109,31 @@ async def create_session(payload: SessionCreateRequest, request: Request) -> Ses
         model=payload.model,
         project=payload.project,
     )
+
+
+@app.get("/v1/demo/session/status")
+async def session_status(request: Request) -> dict[str, object]:
+    """Validate the Bearer demo session against both JWT and server-side session state."""
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Bearer demo session token required")
+    token = auth.split(" ", 1)[1].strip()
+    payload = decode_jwt(token)
+    raw = await store.get(f"llm:session:{payload['sid']}")
+    if raw is None:
+        raise HTTPException(status_code=401, detail="Demo session expired or revoked")
+    try:
+        record = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="Corrupt demo session") from exc
+    return {
+        "active": True,
+        "sid": payload["sid"],
+        "provider": record.get("provider") or payload.get("provider"),
+        "model": record.get("model") or payload.get("model"),
+        "project": record.get("project") or payload.get("project"),
+        "expires_at": payload.get("exp"),
+    }
 
 
 @app.post("/v1/demo/session/revoke", response_model=RevokeResponse)

@@ -71,7 +71,7 @@ Required:
 Recommended defaults:
 
 - `SESSION_TTL_SECONDS=1800`
-- `MAX_REQUESTS_PER_MINUTE=12`
+- `MAX_REQUESTS_PER_MINUTE=60`
 - `MAX_OUTPUT_TOKENS=4096`
 
 ## Local setup

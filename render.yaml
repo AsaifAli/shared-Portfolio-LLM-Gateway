@@ -6,4 +6,23 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     autoDeployTrigger: checksPass
-    healthCheckPath: /healthz
+    healthCheckPath: /readyz
+
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+
+      - key: GATEWAY_JWT_SECRET
+        sync: false
+
+      - key: GATEWAY_ENCRYPTION_KEY
+        sync: false
+
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+
+      - key: CORS_ORIGINS
+        sync: false

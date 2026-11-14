@@ -5,7 +5,7 @@ import time
 from typing import Any
 import logging
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -23,6 +23,15 @@ from .models import (
     RevokeResponse,
     SessionCreateRequest,
     SessionCreateResponse,
+    SessionHandoffRequest,
+    SessionHandoffResponse,
+    SessionExchangeRequest,
+    SessionExchangeResponse,
+)
+from .handoff import (
+    HANDOFF_CODE_TTL_SECONDS,
+    exchange_session_handoff,
+    issue_session_handoff,
 )
 from .security import (
     create_jwt,
@@ -356,6 +365,60 @@ async def create_session(
         provider=payload.provider,
         model=payload.model,
         project=payload.project,
+    )
+
+
+@app.post(
+    "/v1/demo/session/handoff",
+    response_model=SessionHandoffResponse,
+)
+async def create_handoff(
+    payload: SessionHandoffRequest,
+    request: Request,
+    response: Response,
+) -> SessionHandoffResponse:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+
+    claims, session = await load_session_context(request)
+
+    await enforce_rate_limit(
+        session["sid"],
+        request.client.host if request.client else "unknown",
+    )
+
+    code = await issue_session_handoff(
+        claims,
+        session,
+        payload.project,
+    )
+
+    return SessionHandoffResponse(
+        code=code,
+        expires_in=HANDOFF_CODE_TTL_SECONDS,
+        project=payload.project,
+    )
+
+
+@app.post(
+    "/v1/demo/session/exchange",
+    response_model=SessionExchangeResponse,
+)
+async def exchange_handoff(
+    payload: SessionExchangeRequest,
+    request: Request,
+    response: Response,
+) -> SessionExchangeResponse:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+
+    await enforce_session_create_rate_limit(
+        request.client.host if request.client else "unknown"
+    )
+
+    return await exchange_session_handoff(
+        payload.code,
+        payload.project,
     )
 
 

@@ -59,6 +59,53 @@ class SessionCreateResponse(BaseModel):
     project: str
 
 
+class SessionHandoffRequest(BaseModel):
+    project: str = Field(min_length=1, max_length=80)
+
+    @field_validator("project")
+    @classmethod
+    def normalize_project(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("Project cannot be empty")
+        return value
+
+
+class SessionHandoffResponse(BaseModel):
+    code: str
+    expires_in: int
+    project: str
+
+
+class SessionExchangeRequest(BaseModel):
+    code: str = Field(min_length=32, max_length=128)
+    project: str = Field(min_length=1, max_length=80)
+
+    @field_validator("code")
+    @classmethod
+    def strip_code(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Code cannot be empty")
+        return value
+
+    @field_validator("project")
+    @classmethod
+    def normalize_project(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("Project cannot be empty")
+        return value
+
+class SessionExchangeResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    provider: str
+    model: str
+    target_project: str
+
+
 class ProviderModel(BaseModel):
     id: str
     provider: str

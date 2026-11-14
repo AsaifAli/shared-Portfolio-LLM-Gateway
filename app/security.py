@@ -185,6 +185,25 @@ class SessionStore:
 
         self._memory.pop(key, None)
 
+    async def consume(self, key: str) -> str | None:
+        """Atomically read and delete a single-use value."""
+        if self._redis is not None:
+            try:
+                value = await self._redis.getdel(key)
+                return str(value) if value is not None else None
+            except Exception as exc:
+                raise self._redis_failure("getdel", exc) from exc
+
+        item = self._memory.pop(key, None)
+        if item is None:
+            return None
+
+        expiry, value = item
+        if time.monotonic() >= expiry:
+            return None
+
+        return value
+
     async def incr_with_ttl(
         self,
         key: str,

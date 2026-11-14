@@ -30,6 +30,9 @@ class FailingRedis:
     async def delete(self, *args, **kwargs):
         raise ConnectionError("Simulated Redis outage")
 
+    async def getdel(self, *args, **kwargs):
+        raise ConnectionError("Simulated Redis outage")
+
     def multi(self):
         raise ConnectionError("Simulated Redis outage")
 
@@ -60,7 +63,7 @@ class FakeRedis:
 
 @pytest.mark.parametrize(
     "operation",
-    ["set", "get", "delete", "incr"],
+    ["set", "get", "delete", "consume", "incr"],
 )
 def test_redis_failure_does_not_fallback_to_memory(operation):
     redis = FailingRedis()
@@ -75,6 +78,9 @@ def test_redis_failure_does_not_fallback_to_memory(operation):
 
         elif operation == "delete":
             await session_store.delete("key")
+
+        elif operation == "consume":
+            await session_store.consume("key")
 
         elif operation == "incr":
             await session_store.incr_with_ttl("counter", 60)

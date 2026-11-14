@@ -34,7 +34,7 @@ LiteLLM / provider adapter
 User-selected provider/model
 ```
 
-Provider API keys are not placed in JWT claims, browser storage, URLs, or project source code.
+Provider API keys are not placed in JWT claims, browser storage, URLs, or project source code. The website retains the short-lived bearer token in session storage; only a random, project-bound, single-use code is passed to a demo application's URL. The receiving app removes that code immediately and exchanges it server-side. Handoff codes expire after 60 seconds and are atomically consumed once.
 
 ### Demo stability
 

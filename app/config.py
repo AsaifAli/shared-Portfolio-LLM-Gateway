@@ -19,6 +19,9 @@ class ModelConfig:
     label: str | None = None
 
 
+ALLOWED_HANDOFF_PROJECTS = frozenset({"evidenceflow", "quotesense"})
+
+
 DEFAULT_MODELS = [
     ModelConfig(
         "openai-default",

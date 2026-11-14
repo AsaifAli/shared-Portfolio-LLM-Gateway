@@ -433,7 +433,8 @@ async def session_status(
         "sid": claims["sid"],
         "provider": record["provider"],
         "model": record["model"],
-        "project": record["project"],
+        "project": claims["project"],
+        "session_project": record["project"],
         "expires_at": claims["exp"],
     }
 

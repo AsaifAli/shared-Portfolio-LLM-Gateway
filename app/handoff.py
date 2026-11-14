@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from .config import settings
+from .config import ALLOWED_HANDOFF_PROJECTS, settings
 from .models import SessionExchangeResponse
 from .security import create_jwt, store
 
@@ -39,9 +39,31 @@ async def issue_session_handoff(
     if not isinstance(sid, str) or not sid:
         raise HTTPException(status_code=401, detail="Invalid demo session")
 
-    for field in ("sid", "provider", "model", "project"):
+    for field in ("sid", "provider", "model"):
         if claims.get(field) != session.get(field):
             raise HTTPException(status_code=401, detail="Invalid demo session")
+
+    session_project = session.get("project")
+    token_session_project = claims.get(
+        "session_project",
+        claims.get("project"),
+    )
+
+    if (
+        session_project != "portfolio"
+        or claims.get("project") != session_project
+        or token_session_project != session_project
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Only a portfolio session can launch a demo",
+        )
+
+    if target_project not in ALLOWED_HANDOFF_PROJECTS:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported demo project",
+        )
 
     try:
         session_expires_at = int(claims["exp"])
@@ -76,6 +98,12 @@ async def exchange_session_handoff(
     target_project: str,
 ) -> SessionExchangeResponse:
     """Atomically redeem a project-bound handoff code for a session JWT."""
+    if target_project not in ALLOWED_HANDOFF_PROJECTS:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid, expired, or already used handoff code",
+        )
+
     key = _handoff_storage_key(code)
     raw = await store.get(key)
 
@@ -152,8 +180,9 @@ async def exchange_session_handoff(
         session["sid"],
         session["provider"],
         session["model"],
-        session["project"],
+        target_project,
         ttl,
+        session_project=session["project"],
     )
 
     return SessionExchangeResponse(

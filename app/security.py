@@ -12,7 +12,7 @@ import jwt
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException, Request
 
-from .config import settings
+from .config import ALLOWED_HANDOFF_PROJECTS, settings
 
 
 logger = logging.getLogger(__name__)
@@ -301,6 +301,8 @@ def create_jwt(
     model_id: str,
     project: str,
     ttl: int,
+    *,
+    session_project: str | None = None,
 ) -> str:
     if ttl <= 0:
         raise ValueError("JWT TTL must be positive")
@@ -314,6 +316,7 @@ def create_jwt(
         "provider": provider,
         "model": model_id,
         "project": project,
+        "session_project": session_project or project,
         "iat": now,
         "exp": now + ttl,
         "jti": secrets.token_urlsafe(12),
@@ -406,13 +409,42 @@ async def load_session_context(
             detail="Invalid demo session record",
         )
 
-    # The signed JWT and server-side session must agree.
-    for field in ("sid", "provider", "model", "project"):
+    token_project = payload.get("project")
+    session_project = payload.get("session_project", token_project)
+
+    if (
+        not isinstance(token_project, str)
+        or not isinstance(session_project, str)
+        or not token_project
+        or not session_project
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid demo session",
+        )
+
+    # Delegation is only allowed from the portfolio to an approved demo.
+    if token_project != session_project and (
+        session_project != "portfolio"
+        or token_project not in ALLOWED_HANDOFF_PROJECTS
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid demo session",
+        )
+
+    for field in ("sid", "provider", "model"):
         if record.get(field) != payload.get(field):
             raise HTTPException(
                 status_code=401,
                 detail="Invalid demo session",
             )
+
+    if record.get("project") != session_project:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid demo session",
+        )
 
     return payload, record
 

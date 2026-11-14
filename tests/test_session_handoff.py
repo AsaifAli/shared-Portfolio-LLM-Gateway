@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.security import store
+from app.security import decode_jwt, store
 
 
 client = TestClient(app)
@@ -73,18 +73,41 @@ def test_handoff_exchange_is_single_use():
     assert payload["access_token"]
     assert payload["access_token"] != original_token
 
+    claims = decode_jwt(payload["access_token"])
+    assert claims["project"] == "evidenceflow"
+    assert claims["session_project"] == "portfolio"
+
     status = client.get(
         "/v1/demo/session/status",
         headers={"Authorization": f"Bearer {payload['access_token']}"},
     )
     assert status.status_code == 200
     assert status.json()["active"] is True
+    assert status.json()["project"] == "evidenceflow"
+    assert status.json()["session_project"] == "portfolio"
+
+    chained = client.post(
+        "/v1/demo/session/handoff",
+        headers={"Authorization": f"Bearer {payload['access_token']}"},
+        json={"project": "quotesense"},
+    )
+    assert chained.status_code == 401
 
     replay = client.post(
         "/v1/demo/session/exchange",
         json={"code": code, "project": "evidenceflow"},
     )
     assert replay.status_code == 401
+
+
+def test_handoff_rejects_unapproved_target_project():
+    token = create_portfolio_session()
+    response = client.post(
+        "/v1/demo/session/handoff",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"project": "admin"},
+    )
+    assert response.status_code == 400
 
 
 def test_handoff_code_is_bound_to_target_project():

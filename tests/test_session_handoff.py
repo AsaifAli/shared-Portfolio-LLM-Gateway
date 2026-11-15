@@ -156,3 +156,32 @@ def test_memory_store_consume_is_single_use():
 
     assert first == "value"
     assert second is None
+
+def test_flowpilot_handoff_is_project_bound_and_single_use():
+    token = create_portfolio_session()
+    code = issue_handoff(token, "flowpilot")
+
+    wrong_project = client.post(
+        "/v1/demo/session/exchange",
+        json={"code": code, "project": "quotesense"},
+    )
+    assert wrong_project.status_code == 401
+
+    exchanged = client.post(
+        "/v1/demo/session/exchange",
+        json={"code": code, "project": "flowpilot"},
+    )
+    assert exchanged.status_code == 200
+    payload = exchanged.json()
+    assert payload["target_project"] == "flowpilot"
+
+    claims = decode_jwt(payload["access_token"])
+    assert claims["project"] == "flowpilot"
+    assert claims["session_project"] == "portfolio"
+
+    replay = client.post(
+        "/v1/demo/session/exchange",
+        json={"code": code, "project": "flowpilot"},
+    )
+    assert replay.status_code == 401
+

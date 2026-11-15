@@ -19,7 +19,7 @@ class ModelConfig:
     label: str | None = None
 
 
-ALLOWED_HANDOFF_PROJECTS = frozenset({"evidenceflow", "quotesense"})
+ALLOWED_HANDOFF_PROJECTS = frozenset({'evidenceflow', 'flowpilot', 'quotesense'})
 
 
 DEFAULT_MODELS = [

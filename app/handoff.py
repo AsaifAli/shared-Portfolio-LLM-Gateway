@@ -13,7 +13,7 @@ from .models import SessionExchangeResponse
 from .security import create_jwt, store
 
 
-HANDOFF_CODE_TTL_SECONDS = 60
+HANDOFF_CODE_TTL_SECONDS = 300
 
 
 def _handoff_storage_key(code: str) -> str:

@@ -4,4 +4,5 @@ pydantic>=2.10,<3
 PyJWT>=2.10,<3
 cryptography>=44,<47
 upstash-redis>=1.4,<2
-litellm==1.108.1
+openai==3.57.0
+google-genai==3.6.1

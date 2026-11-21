@@ -14,9 +14,10 @@ from cryptography.fernet import Fernet
 class ModelConfig:
     id: str
     provider: str
-    litellm_model: str
+    model_id: str
     recommended: bool = False
     label: str | None = None
+
 
 
 ALLOWED_HANDOFF_PROJECTS = frozenset({'evidenceflow', 'flowpilot', 'quotesense'})
@@ -26,28 +27,28 @@ DEFAULT_MODELS = [
     ModelConfig(
         "openai-default",
         "openai",
-        "openai/gpt-4o-mini",
+        "gpt-4o-mini",
         True,
         "OpenAI recommended",
     ),
     ModelConfig(
         "gemini-default",
         "google",
-        "gemini/gemini-2.5-flash",
+        "gemini-2.5-flash",
         True,
         "Gemini recommended",
     ),
     ModelConfig(
         "anthropic-default",
         "anthropic",
-        "anthropic/claude-3-5-haiku-latest",
+        "claude-3-5-haiku-latest",
         False,
         "Anthropic",
     ),
     ModelConfig(
         "openrouter-default",
         "openrouter",
-        "openrouter/openai/gpt-oss-20b:free",
+        "openai/gpt-oss-20b:free",
         False,
         "OpenRouter (configure/verify)",
     ),
@@ -63,7 +64,7 @@ SUPPORTED_PROVIDERS = {
 
 
 def normalize_user_model(provider: str, model_id: str) -> str:
-    """Normalize a user-selected model into a LiteLLM provider/model identifier."""
+    """Validate a provider model ID and remove one legacy adapter prefix."""
     provider = provider.strip().lower()
     model_id = model_id.strip()
 
@@ -79,18 +80,19 @@ def normalize_user_model(provider: str, model_id: str) -> str:
     if model_id.startswith(("http://", "https://")):
         raise ValueError("Model identifier must not contain a URL")
 
-    prefix = {
+    # Old registry records used provider prefixes for the prior routing layer.
+    # Normalize those once; OpenRouter's author/model slug remains intact.
+    legacy_prefix = {
         "openai": "openai/",
         "google": "gemini/",
         "anthropic": "anthropic/",
         "openrouter": "openrouter/",
     }[provider]
-
-    if model_id.startswith(prefix):
-        return model_id
-
-    # OpenRouter supports provider-qualified upstream model IDs.
-    return f"{prefix}{model_id}"
+    if model_id.startswith(legacy_prefix):
+        model_id = model_id[len(legacy_prefix):]
+    if not model_id:
+        raise ValueError("Invalid model identifier")
+    return model_id
 
 
 def model_config_for_user(provider: str, model_id: str) -> ModelConfig:
@@ -100,7 +102,7 @@ def model_config_for_user(provider: str, model_id: str) -> ModelConfig:
     return ModelConfig(
         id=model_id.strip(),
         provider=provider,
-        litellm_model=normalized,
+        model_id=normalized,
         recommended=False,
         label=f"{SUPPORTED_PROVIDERS[provider]} custom model",
     )
@@ -281,10 +283,16 @@ class Settings:
                 )
 
             try:
+                provider = str(item["provider"]).strip().lower()
+                # Accept the old registry key during migration so an existing
+                # Render MODEL_REGISTRY_JSON value does not break deployment.
+                raw_model_id = item.get("model_id") or item.get("litellm_model")
+                if raw_model_id is None:
+                    raise KeyError("model_id")
                 model = ModelConfig(
                     id=str(item["id"]),
-                    provider=str(item["provider"]),
-                    litellm_model=str(item["litellm_model"]),
+                    provider=provider,
+                    model_id=normalize_user_model(provider, str(raw_model_id)),
                     recommended=bool(item.get("recommended", False)),
                     label=(
                         str(item["label"])
@@ -294,8 +302,11 @@ class Settings:
                 )
             except KeyError as exc:
                 raise RuntimeError(
-                    "Each model must define id, provider and litellm_model"
+                    "Each model must define id, provider and model_id"
                 ) from exc
+
+            if model.provider not in SUPPORTED_PROVIDERS:
+                raise RuntimeError("Each model must use a supported provider")
 
             if not model.id.strip():
                 raise RuntimeError("Model ID cannot be empty")

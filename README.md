@@ -28,7 +28,7 @@ POST /v1/chat/completions
 Gateway resolves session
    │
    ▼
-LiteLLM / provider adapter
+Direct provider adapters (official SDKs)
    │
    ▼
 User-selected provider/model
@@ -58,7 +58,7 @@ A portfolio demo can still be limited by an upstream provider's own quota/rate l
 ## Core capabilities
 
 - OpenAI-compatible `POST /v1/chat/completions`
-- Multi-provider routing through LiteLLM
+- Provider-specific direct SDK adapters for OpenAI, OpenRouter, Gemini and Anthropic
 - Encrypted provider credentials
 - Redis-backed session storage with TTL
 - Short-lived JWT authentication
@@ -101,7 +101,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 2. Gateway encrypts the credential and stores the temporary session in Redis.
 3. Gateway returns a short-lived JWT.
 4. The project forwards the JWT for inference requests.
-5. Gateway resolves the session and calls the provider through LiteLLM.
+5. Gateway resolves the session and calls the selected provider through its direct SDK adapter.
 6. Session expiration/revocation removes access to the provider credential.
 
 ## Security rules

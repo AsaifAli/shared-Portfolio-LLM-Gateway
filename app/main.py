@@ -14,7 +14,7 @@ from .llm import (
     ProviderError,
     ProviderRateLimitError,
     complete,
-    stream,
+    prepare_stream,
 )
 from .models import (
     ChatCompletionRequest,
@@ -483,8 +483,33 @@ async def chat_completions(
     body = payload.model_dump(exclude_none=True)
 
     if payload.stream:
+        try:
+            # Prime the upstream stream before response headers are sent.
+            # Authentication, model, quota and connection failures can then
+            # return a truthful HTTP status instead of a misleading HTTP 200.
+            event_stream = await prepare_stream(
+                model_cfg,
+                api_key,
+                body,
+            )
+        except ProviderError as exc:
+            headers = {}
+            if exc.retry_after:
+                headers["Retry-After"] = exc.retry_after
+            return JSONResponse(
+                status_code=exc.status_code,
+                headers=headers,
+                content={
+                    "error": {
+                        "message": str(exc),
+                        "type": exc.code,
+                        "code": exc.code,
+                    }
+                },
+            )
+
         return StreamingResponse(
-            stream(model_cfg, api_key, body),
+            event_stream,
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -529,16 +554,18 @@ async def chat_completions(
             },
         )
 
-    except ProviderError:
+    except ProviderError as exc:
+        headers = {}
+        if exc.retry_after:
+            headers["Retry-After"] = exc.retry_after
         return JSONResponse(
-            status_code=502,
+            status_code=exc.status_code,
+            headers=headers,
             content={
                 "error": {
-                    "message": (
-                        "The upstream provider request failed."
-                    ),
-                    "type": "provider_error",
-                    "code": "provider_error",
+                    "message": str(exc),
+                    "type": exc.code,
+                    "code": exc.code,
                 }
             },
         )

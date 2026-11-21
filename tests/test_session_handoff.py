@@ -41,7 +41,7 @@ def issue_handoff(token: str, project: str = "evidenceflow") -> str:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["expires_in"] == 300
+    assert payload["expires_in"] == 60
     assert payload["project"] == project
     assert "access_token" not in payload
     return payload["code"]

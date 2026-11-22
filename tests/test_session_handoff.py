@@ -185,3 +185,32 @@ def test_flowpilot_handoff_is_project_bound_and_single_use():
     )
     assert replay.status_code == 401
 
+
+
+def test_portfolio_session_rejects_model_outside_gateway_registry():
+    response = client.post(
+        "/v1/demo/session",
+        json={
+            "provider": "openai",
+            "model": "gpt-4.1",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+        },
+    )
+    assert response.status_code == 400
+    assert "model registry" in response.json()["detail"].lower()
+
+
+def test_project_scoped_session_can_use_valid_custom_model_id():
+    response = client.post(
+        "/v1/demo/session",
+        json={
+            "provider": "openai",
+            "model": "gpt-4.1",
+            "api_key": "test-api-key-123456",
+            "project": "flowpilot",
+            "ttl_seconds": 600,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["model"] == "gpt-4.1"

@@ -95,9 +95,32 @@ def normalize_user_model(provider: str, model_id: str) -> str:
     return model_id
 
 
-def model_config_for_user(provider: str, model_id: str) -> ModelConfig:
+def model_config_for_user(
+    provider: str,
+    model_id: str,
+    *,
+    allowed_models: dict[str, ModelConfig] | None = None,
+) -> ModelConfig:
+    """Resolve a provider model, optionally restricting it to a registry.
+
+    Portfolio-originated sessions use the Gateway's configured model registry.
+    Project-specific sessions may still use a provider model ID of their choice,
+    subject to provider and identifier validation.
+    """
     provider = provider.strip().lower()
     normalized = normalize_user_model(provider, model_id)
+
+    if allowed_models is not None:
+        for configured in allowed_models.values():
+            if (
+                configured.provider == provider
+                and normalized == configured.model_id
+            ):
+                return configured
+
+        raise ValueError(
+            "The selected model is not enabled in the Gateway model registry"
+        )
 
     return ModelConfig(
         id=model_id.strip(),

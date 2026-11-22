@@ -63,7 +63,8 @@ A portfolio demo can still be limited by an upstream provider's own quota/rate l
 - Redis-backed session storage with TTL
 - Short-lived JWT authentication
 - Per-session / IP rate limiting
-- Server-side model allowlist
+- Server-side model registry for portfolio sessions, exposed through `/v1/providers` with the actual provider model IDs
+- Project-scoped sessions can still use custom provider model IDs after identifier/provider validation
 - Optional controlled fallback
 - Health / readiness endpoints
 
@@ -77,7 +78,7 @@ MAX_REQUESTS_PER_MINUTE=60
 MAX_OUTPUT_TOKENS=4096
 ```
 
-Required production configuration still includes the JWT secret, encryption key, Redis credentials, and model registry.
+Required production configuration still includes the JWT secret, encryption key, Redis credentials, and model registry. The portfolio workbench reads its available model choices from `/v1/providers`; add or change approved portfolio choices through `MODEL_REGISTRY_JSON` rather than editing the website UI. Project-specific sessions retain the existing custom model-ID path.
 
 ## Local setup
 

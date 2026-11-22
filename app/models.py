@@ -109,6 +109,7 @@ class SessionExchangeResponse(BaseModel):
 class ProviderModel(BaseModel):
     id: str
     provider: str
+    model_id: str
     label: str | None = None
     recommended: bool = False
 

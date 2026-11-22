@@ -258,6 +258,7 @@ async def providers() -> ProvidersResponse:
             ProviderModel(
                 id=model.id,
                 provider=model.provider,
+                model_id=model.model_id,
                 label=model.label,
                 recommended=model.recommended,
             )
@@ -274,6 +275,8 @@ async def models() -> dict[str, list[dict[str, object]]]:
                 "id": model.id,
                 "object": "model",
                 "owned_by": model.provider,
+                "model_id": model.model_id,
+                "recommended": model.recommended,
             }
             for model in settings.models.values()
         ]
@@ -296,6 +299,11 @@ async def create_session(
         model_config_for_user(
             payload.provider,
             payload.model,
+            allowed_models=(
+                settings.models
+                if payload.project.strip().lower() == "portfolio"
+                else None
+            ),
         )
     except ValueError as exc:
         raise HTTPException(
@@ -471,6 +479,11 @@ async def chat_completions(
         model_cfg = model_config_for_user(
             session["provider"],
             session["model"],
+            allowed_models=(
+                settings.models
+                if str(session.get("project", "")).strip().lower() == "portfolio"
+                else None
+            ),
         )
     except ValueError as exc:
         raise HTTPException(

@@ -64,7 +64,8 @@ A portfolio demo can still be limited by an upstream provider's own quota/rate l
 - Short-lived JWT authentication
 - Per-session / IP rate limiting
 - Server-side model registry for portfolio sessions, exposed through `/v1/providers` with the actual provider model IDs
-- Project-scoped sessions can still use custom provider model IDs after identifier/provider validation
+- Portfolio BYOK sessions use registry presets by default; a user may explicitly opt into a custom model ID, which is still validated against the selected provider and identifier rules
+- Project-scoped sessions can use custom provider model IDs after identifier/provider validation
 - Optional controlled fallback
 - Health / readiness endpoints
 
@@ -78,7 +79,7 @@ MAX_REQUESTS_PER_MINUTE=60
 MAX_OUTPUT_TOKENS=4096
 ```
 
-Required production configuration still includes the JWT secret, encryption key, Redis credentials, and model registry. The portfolio workbench reads its available model choices from `/v1/providers`; add or change approved portfolio choices through `MODEL_REGISTRY_JSON` rather than editing the website UI. Project-specific sessions retain the existing custom model-ID path.
+Required production configuration still includes the JWT secret, encryption key, Redis credentials, and model registry. The portfolio workbench reads suggested presets from `/v1/providers`; add or change these defaults through `MODEL_REGISTRY_JSON`. A user connecting their own provider account may instead enable the explicit custom-model option and enter a model ID supported by that provider. The Gateway validates the provider and model identifier and retains the choice only in that temporary session.
 
 ## Local setup
 

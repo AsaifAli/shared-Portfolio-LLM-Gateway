@@ -23,6 +23,8 @@ class SessionCreateRequest(BaseModel):
         min_length=1,
         max_length=80,
     )
+    # Custom model IDs are opt-in; preset-only sessions remain registry-bound.
+    allow_custom_model: bool = False
     ttl_seconds: int | None = Field(
         default=None,
         ge=60,

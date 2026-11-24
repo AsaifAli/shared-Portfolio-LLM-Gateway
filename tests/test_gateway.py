@@ -1,8 +1,11 @@
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.config import model_config_for_user, settings
 from app.main import app
+from app.models import SessionCreateRequest
 
 
 client = TestClient(app)
@@ -46,3 +49,51 @@ def test_models_endpoint_exposes_configured_provider_model_id():
         if item["owned_by"] == "openai"
     )
     assert openai_model["model_id"] == "gpt-4o-mini"
+
+
+def test_portfolio_session_defaults_to_approved_registry():
+    with pytest.raises(ValueError, match="not enabled in the Gateway model registry"):
+        model_config_for_user(
+            "openai",
+            "gpt-4.1-mini",
+            allowed_models=settings.models,
+        )
+
+
+def test_portfolio_byoK_custom_model_requires_explicit_opt_in():
+    payload = SessionCreateRequest(
+        provider="openai",
+        model="gpt-4.1-mini",
+        api_key="test-provider-key",
+    )
+    assert payload.allow_custom_model is False
+
+    with pytest.raises(ValueError, match="not enabled in the Gateway model registry"):
+        model_config_for_user(
+            payload.provider,
+            payload.model,
+            allowed_models=settings.models if not payload.allow_custom_model else None,
+        )
+
+    custom_payload = SessionCreateRequest(
+        provider="openai",
+        model="gpt-4.1-mini",
+        api_key="test-provider-key",
+        allow_custom_model=True,
+    )
+    assert custom_payload.allow_custom_model is True
+    resolved = model_config_for_user(
+        custom_payload.provider,
+        custom_payload.model,
+        allowed_models=settings.models if not custom_payload.allow_custom_model else None,
+    )
+    assert resolved.provider == "openai"
+    assert resolved.model_id == "gpt-4.1-mini"
+
+
+def test_custom_model_opt_in_does_not_bypass_provider_or_identifier_validation():
+    with pytest.raises(ValueError, match="Unsupported LLM provider"):
+        model_config_for_user("unsupported", "model-name")
+
+    with pytest.raises(ValueError, match="must not contain a URL"):
+        model_config_for_user("openai", "https://example.invalid/model")

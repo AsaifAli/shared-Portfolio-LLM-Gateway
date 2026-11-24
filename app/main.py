@@ -301,7 +301,10 @@ async def create_session(
             payload.model,
             allowed_models=(
                 settings.models
-                if payload.project.strip().lower() == "portfolio"
+                if (
+                    payload.project.strip().lower() == "portfolio"
+                    and not payload.allow_custom_model
+                )
                 else None
             ),
         )
@@ -349,6 +352,7 @@ async def create_session(
         "provider": payload.provider,
         "model": payload.model,
         "project": payload.project,
+        "allow_custom_model": payload.allow_custom_model,
         "credential": encrypt_secret(api_key),
         "created_at": int(time.time()),
     }
@@ -481,7 +485,10 @@ async def chat_completions(
             session["model"],
             allowed_models=(
                 settings.models
-                if str(session.get("project", "")).strip().lower() == "portfolio"
+                if (
+                    str(session.get("project", "")).strip().lower() == "portfolio"
+                    and not session.get("allow_custom_model", False)
+                )
                 else None
             ),
         )

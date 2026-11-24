@@ -68,12 +68,12 @@ def test_portfolio_byoK_custom_model_requires_explicit_opt_in():
     )
     assert payload.allow_custom_model is False
 
-    approved = model_config_for_user(
-        payload.provider,
-        payload.model,
-        allowed_models=settings.models if not payload.allow_custom_model else None,
-    ) if payload.model in {item.model_id for item in settings.models.values()} else None
-    assert approved is None
+    with pytest.raises(ValueError, match="not enabled in the Gateway model registry"):
+        model_config_for_user(
+            payload.provider,
+            payload.model,
+            allowed_models=settings.models if not payload.allow_custom_model else None,
+        )
 
     custom_payload = SessionCreateRequest(
         provider="openai",

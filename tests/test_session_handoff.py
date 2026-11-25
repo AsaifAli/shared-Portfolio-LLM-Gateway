@@ -407,3 +407,17 @@ def test_supabase_identity_redirect_is_rejected(monkeypatch):
     with pytest.raises(HTTPException) as error:
         asyncio.run(security.verify_supabase_access_token("supabase-access-token"))
     assert error.value.status_code == 503
+
+
+
+def test_supabase_identity_url_validation_rejects_arbitrary_hosts():
+    from types import SimpleNamespace
+
+    from app.config import Settings
+
+    settings = SimpleNamespace(
+        supabase_url="https://attacker.example",
+        supabase_publishable_key="publishable-test",
+    )
+    with pytest.raises(RuntimeError, match="HTTPS Supabase project origin"):
+        Settings._validate_supabase_configuration(settings)

@@ -261,6 +261,14 @@ class Settings:
             "",
         ).strip()
 
+        # Optional Supabase Auth verification for authenticated BYOK sessions.
+        # Anonymous BYOK remains supported and receives a session-isolated scope.
+        self.supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+        self.supabase_publishable_key = os.getenv(
+            "SUPABASE_PUBLISHABLE_KEY",
+            "",
+        ).strip()
+
         # Optional server-side fallback provider configuration.
         self.fallback_provider = os.getenv(
             "FALLBACK_PROVIDER",
@@ -398,6 +406,29 @@ class Settings:
                 "must be configured together"
             )
 
+    def _validate_supabase_configuration(self) -> None:
+        has_url = bool(self.supabase_url)
+        has_key = bool(self.supabase_publishable_key)
+        if has_url != has_key:
+            raise RuntimeError(
+                "SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY must be configured together"
+            )
+        if not has_url:
+            return
+        parsed = urlsplit(self.supabase_url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise RuntimeError(
+                "SUPABASE_URL must be an HTTPS project origin without a path"
+            )
+
     def _validate_fallback_configuration(self) -> None:
         fallback_values = (
             self.fallback_provider,
@@ -488,6 +519,7 @@ class Settings:
         self._validate_numeric_settings()
         self._validate_encryption_key()
         self._validate_redis_configuration()
+        self._validate_supabase_configuration()
         self._validate_fallback_configuration()
 
         # Production must use persistent, encrypted infrastructure.

@@ -214,3 +214,116 @@ def test_project_scoped_session_can_use_valid_custom_model_id():
     )
     assert response.status_code == 200
     assert response.json()["model"] == "gpt-4.1"
+
+
+def test_unauthenticated_byoK_sessions_are_isolated_by_owner_scope():
+    first = create_portfolio_session()
+    second = create_portfolio_session()
+
+    first_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {first}"},
+    )
+    second_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {second}"},
+    )
+
+    assert first_status.status_code == 200
+    assert second_status.status_code == 200
+    first_scope = first_status.json()["owner_scope"]
+    second_scope = second_status.json()["owner_scope"]
+    assert len(first_scope) == 64
+    assert first_scope != second_scope
+
+
+def test_supabase_authenticated_sessions_share_owner_scope(monkeypatch):
+    import app.main as main_module
+
+    user_id = "8cce3a1c-4f9f-4f42-9cbd-e77efed3a619"
+
+    async def verify(_token):
+        return user_id
+
+    monkeypatch.setattr(main_module, "verify_supabase_access_token", verify)
+
+    headers = {"Authorization": "Bearer supabase-access-token"}
+    first = client.post(
+        "/v1/demo/session",
+        headers=headers,
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+            "ttl_seconds": 600,
+        },
+    )
+    second = client.post(
+        "/v1/demo/session",
+        headers=headers,
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+            "ttl_seconds": 600,
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    first_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {first.json()['access_token']}"},
+    )
+    second_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {second.json()['access_token']}"},
+    )
+    assert first_status.json()["owner_scope"] == second_status.json()["owner_scope"]
+
+
+def test_invalid_supabase_bearer_does_not_downgrade_to_anonymous(monkeypatch):
+    import app.main as main_module
+    from fastapi import HTTPException
+
+    async def reject(_token):
+        raise HTTPException(status_code=401, detail="Invalid Supabase access token")
+
+    monkeypatch.setattr(main_module, "verify_supabase_access_token", reject)
+    response = client.post(
+        "/v1/demo/session",
+        headers={"Authorization": "Bearer invalid-supabase-token"},
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+        },
+    )
+    assert response.status_code == 401
+
+
+def test_handoff_preserves_owner_scope():
+    original = create_portfolio_session()
+    original_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {original}"},
+    )
+    owner_scope = original_status.json()["owner_scope"]
+
+    code = issue_handoff(original, "evidenceflow")
+    exchange = client.post(
+        "/v1/demo/session/exchange",
+        json={"code": code, "project": "evidenceflow"},
+    )
+    assert exchange.status_code == 200
+
+    target_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {exchange.json()['access_token']}"},
+    )
+    assert target_status.status_code == 200
+    assert target_status.json()["owner_scope"] == owner_scope

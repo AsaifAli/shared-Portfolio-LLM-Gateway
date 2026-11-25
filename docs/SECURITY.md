@@ -17,10 +17,10 @@ This gateway handles user-provided provider API credentials and bearer session J
 - API keys are supplied via server-side environment variables; provider keys are not included in JWT claims or gateway-generated browser URLs.
 
 ## BYOK compatibility and identity activation
-The Gateway's existing encrypted provider-key store, short-lived bearer JWT, `sessionStorage` token handoff and one-time exchange semantics are preserved. No HttpOnly-cookie migration was attempted because it requires a coordinated same-site/BFF change across all apps. The website's Supabase identity attachment is opt-in via `NEXT_PUBLIC_GATEWAY_SUPABASE_IDENTITY_ENABLED=true`; configure both Gateway Supabase variables before enabling the flag. With the flag off, the current guest BYOK flow is unchanged.
+The Gateway's existing encrypted provider-key store, short-lived bearer JWT, `sessionStorage` token handoff and one-time exchange semantics are preserved. No HttpOnly-cookie migration was attempted because it requires a coordinated same-site/BFF change across all apps. The studio website's Supabase identity attachment is opt-in via the server-only `GATEWAY_SUPABASE_IDENTITY_ENABLED=true` runtime binding; configure both Gateway Supabase variables before enabling the flag. With the flag off, the current guest BYOK flow is unchanged.
 
 ## Important architectural note
-The Gateway returns a short-lived bearer JWT to the calling portfolio frontend. The project README says the portfolio keeps it in sessionStorage; this differs from the checklist strict HttpOnly-cookie requirement. Since project apps must forward the credential for inference, moving this to a cookie requires a coordinated same-site/BFF design across the website and all client apps. Do not unilaterally switch response semantics in this gateway and break BYOK. Avoid localStorage; use short TTL, scoped audience, CSP, no-store responses and server-side handoff.
+The Gateway returns a short-lived bearer JWT to its trusted calling service. The studio website's BFF stores that upstream token in a path-scoped HttpOnly cookie and never returns it to browser JavaScript. Other project applications must use a server-side proxy or an equally narrow, short-lived session boundary; do not place Gateway or provider credentials in localStorage. Keep short TTLs, project-scoped audiences, no-store responses and one-time server-side handoff.
 
 ## Remaining / recommended work
 1. Add strict validation for inbound message/tool JSON structures and enforce aggregate nested payload limits, not only top-level request bytes.
@@ -47,7 +47,7 @@ The Gateway returns a short-lived bearer JWT to the calling portfolio frontend. 
 |11|RLS|N/A — no application database|
 |12|JWT secret|PARTIAL — 256-bit length validation and expiry; no built-in multi-key rotation|
 |13|Server-side API keys|PASS — provider keys encrypted and server-side|
-|14|No localStorage tokens|PARTIAL — gateway avoids localStorage; website uses sessionStorage bearer per README; no HttpOnly cookie flow|
+|14|No localStorage tokens|PARTIAL — studio website uses a path-scoped HttpOnly BFF cookie; other consuming apps still require individual review|
 |15|No default credentials|PASS in production config — missing secrets fail closed; verify deployment values|
 |16|Strict CORS|PASS — explicit origins, no credentials, production validation|
 |17|Webhook signatures|N/A — no webhook receiver|

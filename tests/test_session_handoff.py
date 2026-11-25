@@ -327,3 +327,83 @@ def test_handoff_preserves_owner_scope():
     )
     assert target_status.status_code == 200
     assert target_status.json()["owner_scope"] == owner_scope
+
+
+
+def test_supabase_access_token_is_verified_server_side_and_only_user_id_is_used(monkeypatch):
+    import asyncio
+
+    import app.security as security
+
+    class FakeResponse:
+        status_code = 200
+        content = b'{"id":"8cce3a1c-4f9f-4f42-9cbd-e77efed3a619"}'
+
+        def json(self):
+            return {"id": "8cce3a1c-4f9f-4f42-9cbd-e77efed3a619"}
+
+    class FakeAsyncClient:
+        options = None
+        request = None
+
+        def __init__(self, **kwargs):
+            self.options = kwargs
+
+        async def __aenter__(self):
+            FakeAsyncClient.options = self.options
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, headers):
+            FakeAsyncClient.request = (url, headers)
+            return FakeResponse()
+
+    monkeypatch.setattr(security.settings, "supabase_url", "https://project.supabase.co")
+    monkeypatch.setattr(security.settings, "supabase_publishable_key", "sb_publishable_test")
+    monkeypatch.setattr(security.httpx, "AsyncClient", FakeAsyncClient)
+
+    user_id = asyncio.run(security.verify_supabase_access_token("supabase-access-token"))
+
+    assert user_id == "8cce3a1c-4f9f-4f42-9cbd-e77efed3a619"
+    assert FakeAsyncClient.options["follow_redirects"] is False
+    assert FakeAsyncClient.options["trust_env"] is False
+    assert FakeAsyncClient.request[0] == "https://project.supabase.co/auth/v1/user"
+    assert FakeAsyncClient.request[1]["Authorization"] == "Bearer supabase-access-token"
+    assert FakeAsyncClient.request[1]["apikey"] == "sb_publishable_test"
+
+
+def test_supabase_identity_redirect_is_rejected(monkeypatch):
+    import asyncio
+
+    import app.security as security
+
+    class FakeResponse:
+        status_code = 302
+        content = b""
+
+        def json(self):
+            return {}
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            assert kwargs["follow_redirects"] is False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(security.settings, "supabase_url", "https://project.supabase.co")
+    monkeypatch.setattr(security.settings, "supabase_publishable_key", "sb_publishable_test")
+    monkeypatch.setattr(security.httpx, "AsyncClient", FakeAsyncClient)
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(security.verify_supabase_access_token("supabase-access-token"))
+    assert error.value.status_code == 503

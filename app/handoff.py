@@ -211,4 +211,5 @@ async def exchange_session_handoff(
         provider=session["provider"],
         model=session["model"],
         target_project=target_project,
+        owner_scope=owner_scope,
     )

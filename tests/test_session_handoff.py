@@ -214,3 +214,210 @@ def test_project_scoped_session_can_use_valid_custom_model_id():
     )
     assert response.status_code == 200
     assert response.json()["model"] == "gpt-4.1"
+
+
+def test_unauthenticated_byoK_sessions_are_isolated_by_owner_scope():
+    first = create_portfolio_session()
+    second = create_portfolio_session()
+
+    first_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {first}"},
+    )
+    second_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {second}"},
+    )
+
+    assert first_status.status_code == 200
+    assert second_status.status_code == 200
+    first_scope = first_status.json()["owner_scope"]
+    second_scope = second_status.json()["owner_scope"]
+    assert len(first_scope) == 64
+    assert first_scope != second_scope
+
+
+def test_supabase_authenticated_sessions_share_owner_scope(monkeypatch):
+    import app.main as main_module
+
+    user_id = "8cce3a1c-4f9f-4f42-9cbd-e77efed3a619"
+
+    async def verify(_token):
+        return user_id
+
+    monkeypatch.setattr(main_module, "verify_supabase_access_token", verify)
+
+    headers = {"Authorization": "Bearer supabase-access-token"}
+    first = client.post(
+        "/v1/demo/session",
+        headers=headers,
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+            "ttl_seconds": 600,
+        },
+    )
+    second = client.post(
+        "/v1/demo/session",
+        headers=headers,
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+            "ttl_seconds": 600,
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    first_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {first.json()['access_token']}"},
+    )
+    second_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {second.json()['access_token']}"},
+    )
+    assert first_status.json()["owner_scope"] == second_status.json()["owner_scope"]
+
+
+def test_invalid_supabase_bearer_does_not_downgrade_to_anonymous(monkeypatch):
+    import app.main as main_module
+    from fastapi import HTTPException
+
+    async def reject(_token):
+        raise HTTPException(status_code=401, detail="Invalid Supabase access token")
+
+    monkeypatch.setattr(main_module, "verify_supabase_access_token", reject)
+    response = client.post(
+        "/v1/demo/session",
+        headers={"Authorization": "Bearer invalid-supabase-token"},
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+        },
+    )
+    assert response.status_code == 401
+
+
+def test_handoff_preserves_owner_scope():
+    original = create_portfolio_session()
+    original_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {original}"},
+    )
+    owner_scope = original_status.json()["owner_scope"]
+
+    code = issue_handoff(original, "evidenceflow")
+    exchange = client.post(
+        "/v1/demo/session/exchange",
+        json={"code": code, "project": "evidenceflow"},
+    )
+    assert exchange.status_code == 200
+
+    target_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {exchange.json()['access_token']}"},
+    )
+    assert target_status.status_code == 200
+    assert target_status.json()["owner_scope"] == owner_scope
+
+
+
+def test_supabase_access_token_is_verified_server_side_and_only_user_id_is_used(monkeypatch):
+    import asyncio
+
+    import app.security as security
+
+    class FakeResponse:
+        status_code = 200
+        content = b'{"id":"8cce3a1c-4f9f-4f42-9cbd-e77efed3a619"}'
+
+        def json(self):
+            return {"id": "8cce3a1c-4f9f-4f42-9cbd-e77efed3a619"}
+
+    class FakeAsyncClient:
+        options = None
+        request = None
+
+        def __init__(self, **kwargs):
+            self.options = kwargs
+
+        async def __aenter__(self):
+            FakeAsyncClient.options = self.options
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, headers):
+            FakeAsyncClient.request = (url, headers)
+            return FakeResponse()
+
+    monkeypatch.setattr(security.settings, "supabase_url", "https://project.supabase.co")
+    monkeypatch.setattr(security.settings, "supabase_publishable_key", "sb_publishable_test")
+    monkeypatch.setattr(security.httpx, "AsyncClient", FakeAsyncClient)
+
+    user_id = asyncio.run(security.verify_supabase_access_token("supabase-access-token"))
+
+    assert user_id == "8cce3a1c-4f9f-4f42-9cbd-e77efed3a619"
+    assert FakeAsyncClient.options["follow_redirects"] is False
+    assert FakeAsyncClient.options["trust_env"] is False
+    assert FakeAsyncClient.request[0] == "https://project.supabase.co/auth/v1/user"
+    assert FakeAsyncClient.request[1]["Authorization"] == "Bearer supabase-access-token"
+    assert FakeAsyncClient.request[1]["apikey"] == "sb_publishable_test"
+
+
+def test_supabase_identity_redirect_is_rejected(monkeypatch):
+    import asyncio
+
+    import app.security as security
+
+    class FakeResponse:
+        status_code = 302
+        content = b""
+
+        def json(self):
+            return {}
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            assert kwargs["follow_redirects"] is False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(security.settings, "supabase_url", "https://project.supabase.co")
+    monkeypatch.setattr(security.settings, "supabase_publishable_key", "sb_publishable_test")
+    monkeypatch.setattr(security.httpx, "AsyncClient", FakeAsyncClient)
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(security.verify_supabase_access_token("supabase-access-token"))
+    assert error.value.status_code == 503
+
+
+
+def test_supabase_identity_url_validation_rejects_arbitrary_hosts():
+    from types import SimpleNamespace
+
+    from app.config import Settings
+
+    settings = SimpleNamespace(
+        supabase_url="https://attacker.example",
+        supabase_publishable_key="publishable-test",
+    )
+    with pytest.raises(RuntimeError, match="HTTPS project origin"):
+        Settings._validate_supabase_configuration(settings)

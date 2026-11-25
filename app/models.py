@@ -106,6 +106,7 @@ class SessionExchangeResponse(BaseModel):
     provider: str
     model: str
     target_project: str
+    owner_scope: str
 
 
 class ProviderModel(BaseModel):

@@ -34,7 +34,7 @@ Direct provider adapters (official SDKs)
 User-selected provider/model
 ```
 
-Provider API keys are not placed in JWT claims, browser storage, URLs, or project source code. The website retains the short-lived bearer token in session storage; only a random, project-bound, single-use code is passed to a demo application's URL. The receiving app removes that code immediately and exchanges it server-side. Handoff codes expire after 60 seconds and are atomically consumed once.
+Provider API keys are not placed in JWT claims, browser storage, URLs, or project source code. The studio website proxies Gateway session creation, status and revocation through same-origin server routes; the Gateway bearer stays in a path-scoped HttpOnly cookie and the browser receives only non-sensitive provider/model/expiry metadata. Only a random, project-bound, single-use code is passed to a demo application's URL. The receiving app removes that code immediately and exchanges it server-side. Handoff codes expire after 60 seconds and are atomically consumed once. Other client applications must keep any Gateway bearer short-lived and session-scoped; never put it in localStorage.
 
 ### Demo stability
 

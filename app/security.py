@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import re
 import logging
 import secrets
 import time
 from typing import Any
 
+import httpx
 import jwt
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException, Request
@@ -261,6 +264,98 @@ class SessionStore:
 store = SessionStore()
 
 
+def owner_scope_for_user(user_id: str) -> str:
+    """Return a stable opaque scope for a Supabase-verified user identity."""
+    normalized = str(user_id or "").strip().lower()
+    if not re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+        normalized,
+    ):
+        raise ValueError("Supabase user ID is invalid")
+    return hmac.new(
+        settings.jwt_secret.encode("utf-8"),
+        f"user:{normalized}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def owner_scope_for_session(session_id: str) -> str:
+    """Give anonymous BYOK sessions their own non-shareable document scope."""
+    return hmac.new(
+        settings.jwt_secret.encode("utf-8"),
+        f"session:{session_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+async def verify_supabase_access_token(access_token: str) -> str:
+    """Validate a Supabase access token with Auth's /user endpoint.
+
+    Only the canonical user ID is returned. Mutable user_metadata is never
+    used for authorization or ownership.
+    """
+    url = str(getattr(settings, "supabase_url", "") or "").strip().rstrip("/")
+    api_key = str(getattr(settings, "supabase_publishable_key", "") or "").strip()
+    if not url or not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase identity verification is not configured.",
+        )
+    if (
+        not isinstance(access_token, str)
+        or not access_token.strip()
+        or len(access_token) > 8192
+        or "\n" in access_token
+        or "\r" in access_token
+    ):
+        raise HTTPException(status_code=401, detail="Invalid Supabase access token.")
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=5.0,
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            response = await client.get(
+                f"{url}/auth/v1/user",
+                headers={
+                    "apikey": api_key,
+                    "Authorization": f"Bearer {access_token.strip()}",
+                    "Accept": "application/json",
+                    "Cache-Control": "no-store",
+                },
+            )
+    except httpx.HTTPError:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase identity verification is temporarily unavailable.",
+        ) from None
+
+    if 300 <= response.status_code < 400:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase identity verification redirects are not allowed.",
+        )
+    if response.status_code in {401, 403}:
+        raise HTTPException(status_code=401, detail="Invalid Supabase access token.")
+    if response.status_code != 200 or len(response.content) > 8192:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase identity verification returned an invalid response.",
+        )
+
+    try:
+        payload = response.json()
+        user_id = str(payload.get("id") or "").strip().lower()
+        owner_scope_for_user(user_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(
+            status_code=401,
+            detail="Supabase identity response did not contain a valid user.",
+        ) from None
+    return user_id
+
+
 def get_fernet() -> Fernet:
     if settings.encryption_key:
         try:
@@ -303,6 +398,7 @@ def create_jwt(
     ttl: int,
     *,
     session_project: str | None = None,
+    owner_scope: str | None = None,
 ) -> str:
     if ttl <= 0:
         raise ValueError("JWT TTL must be positive")
@@ -317,6 +413,7 @@ def create_jwt(
         "model": model_id,
         "project": project,
         "session_project": session_project or project,
+        "owner_scope": owner_scope or owner_scope_for_session(session_id),
         "iat": now,
         "exp": now + ttl,
         "jti": secrets.token_urlsafe(12),
@@ -445,6 +542,22 @@ async def load_session_context(
             status_code=401,
             detail="Invalid demo session",
         )
+
+    # Pre-upgrade active sessions have no owner_scope claim. Treat those as
+    # per-session anonymous scopes; never infer a Supabase identity from
+    # untrusted JWT metadata.
+    owner_scope = payload.get("owner_scope") or owner_scope_for_session(payload["sid"])
+    stored_scope = record.get("owner_scope") or owner_scope_for_session(payload["sid"])
+    if (
+        not isinstance(owner_scope, str)
+        or not hmac.compare_digest(owner_scope, stored_scope)
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid demo session",
+        )
+    payload["owner_scope"] = owner_scope
+    record["owner_scope"] = stored_scope
 
     return payload, record
 

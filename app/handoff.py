@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from .config import ALLOWED_HANDOFF_PROJECTS, settings
 from .models import SessionExchangeResponse
-from .security import create_jwt, store
+from .security import create_jwt, owner_scope_for_session, store
 
 
 HANDOFF_CODE_TTL_SECONDS = 60
@@ -75,11 +75,23 @@ async def issue_session_handoff(
 
     code = secrets.token_urlsafe(32)
 
+    owner_scope = (
+        claims.get("owner_scope")
+        or session.get("owner_scope")
+        or owner_scope_for_session(sid)
+    )
+    if (
+        not isinstance(owner_scope, str)
+        or owner_scope != session.get("owner_scope", owner_scope)
+    ):
+        raise HTTPException(status_code=401, detail="Invalid demo session")
+
     handoff_record = {
         "sid": sid,
         "provider": session["provider"],
         "model": session["model"],
         "session_project": session["project"],
+        "owner_scope": owner_scope,
         "target_project": target_project,
         "session_expires_at": session_expires_at,
     }
@@ -165,6 +177,13 @@ async def exchange_session_handoff(
         if handoff.get(handoff_field) != session.get(session_field):
             raise HTTPException(status_code=401, detail="Invalid demo session")
 
+    owner_scope = (
+        session.get("owner_scope")
+        or owner_scope_for_session(sid)
+    )
+    if handoff.get("owner_scope", owner_scope) != owner_scope:
+        raise HTTPException(status_code=401, detail="Invalid demo session")
+
     try:
         session_expires_at = int(handoff["session_expires_at"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -183,6 +202,7 @@ async def exchange_session_handoff(
         target_project,
         ttl,
         session_project=session["project"],
+        owner_scope=owner_scope,
     )
 
     return SessionExchangeResponse(
@@ -191,4 +211,5 @@ async def exchange_session_handoff(
         provider=session["provider"],
         model=session["model"],
         target_project=target_project,
+        owner_scope=owner_scope,
     )

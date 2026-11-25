@@ -42,6 +42,9 @@ from .security import (
     load_session_context,
     load_session_from_request,
     new_session_id,
+    owner_scope_for_session,
+    owner_scope_for_user,
+    verify_supabase_access_token,
     store,
     SessionStoreUnavailable,
 )
@@ -346,12 +349,28 @@ async def create_session(
     )
 
     sid = new_session_id()
+    authorization = request.headers.get("authorization", "")
+    auth_parts = authorization.split()
+    if authorization and (
+        len(auth_parts) != 2 or auth_parts[0].lower() != "bearer"
+    ):
+        raise HTTPException(status_code=401, detail="Invalid Supabase authorization header")
+
+    if auth_parts:
+        # A supplied identity token must validate; never silently downgrade an
+        # expired/invalid authenticated request into an anonymous BYOK scope.
+        supabase_user_id = await verify_supabase_access_token(auth_parts[1])
+        owner_scope = owner_scope_for_user(supabase_user_id)
+    else:
+        # Backward-compatible anonymous BYOK uses a per-session scope.
+        owner_scope = owner_scope_for_session(sid)
 
     record = {
         "sid": sid,
         "provider": payload.provider,
         "model": payload.model,
         "project": payload.project,
+        "owner_scope": owner_scope,
         "allow_custom_model": payload.allow_custom_model,
         "credential": encrypt_secret(api_key),
         "created_at": int(time.time()),
@@ -369,6 +388,7 @@ async def create_session(
         payload.model,
         payload.project,
         ttl,
+        owner_scope=owner_scope,
     )
 
     return SessionCreateResponse(
@@ -447,6 +467,7 @@ async def session_status(
         "model": record["model"],
         "project": claims["project"],
         "session_project": record["project"],
+        "owner_scope": record.get("owner_scope") or owner_scope_for_session(claims["sid"]),
         "expires_at": claims["exp"],
     }
 

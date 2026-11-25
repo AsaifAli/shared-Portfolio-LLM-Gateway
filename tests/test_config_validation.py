@@ -136,3 +136,29 @@ def test_production_rejects_invalid_encryption_key(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Fernet"):
         Settings().validate_runtime()
+
+
+def test_supabase_identity_configuration_is_optional_when_unset(monkeypatch):
+    configure_valid_production(monkeypatch)
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
+
+    Settings().validate_runtime()
+
+
+def test_supabase_identity_requires_both_settings(monkeypatch):
+    configure_valid_production(monkeypatch)
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY"):
+        Settings().validate_runtime()
+
+
+def test_supabase_identity_requires_https_project_origin(monkeypatch):
+    configure_valid_production(monkeypatch)
+    monkeypatch.setenv("SUPABASE_URL", "http://project.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+
+    with pytest.raises(RuntimeError, match="HTTPS project origin"):
+        Settings().validate_runtime()

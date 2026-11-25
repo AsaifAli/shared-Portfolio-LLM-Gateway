@@ -415,10 +415,16 @@ class Settings:
             )
         if not has_url:
             return
-        parsed = urlsplit(self.supabase_url)
+        try:
+            parsed = urlsplit(self.supabase_url)
+            hostname = (parsed.hostname or "").rstrip(".").lower()
+            port = parsed.port
+        except ValueError as exc:
+            raise RuntimeError("SUPABASE_URL is malformed") from exc
         if (
             parsed.scheme != "https"
-            or not parsed.hostname
+            or not hostname.endswith(".supabase.co")
+            or port not in {None, 443}
             or parsed.username is not None
             or parsed.password is not None
             or parsed.path

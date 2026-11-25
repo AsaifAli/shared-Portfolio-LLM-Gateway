@@ -419,5 +419,5 @@ def test_supabase_identity_url_validation_rejects_arbitrary_hosts():
         supabase_url="https://attacker.example",
         supabase_publishable_key="publishable-test",
     )
-    with pytest.raises(RuntimeError, match="HTTPS Supabase project origin"):
+    with pytest.raises(RuntimeError, match="HTTPS project origin"):
         Settings._validate_supabase_configuration(settings)

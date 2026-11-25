@@ -5,6 +5,8 @@ This gateway handles user-provided provider API credentials and bearer session J
 ## Observed controls
 - JWTs are signed with HS256 and require standard identity/expiry claims in `app/security.py`; runtime configuration requires at least 32 characters.
 - Provider keys are encrypted before session persistence using Fernet; production requires an explicit encryption key and Redis.
+- Optional authenticated-owner binding is implemented: when `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` are configured, the Gateway verifies the supplied Supabase access token with `/auth/v1/user` (redirects/proxy environment disabled) and derives a stable opaque owner hash. Unauthenticated BYOK sessions remain supported but receive a separate per-session scope.
+- The owner scope is returned from Gateway status and carried through one-time project handoff; apps must compare it server-side, never accept a scope supplied in workflow payloads.
 - Redis-backed session store fails closed when configured Redis is unavailable.
 - Session and per-IP throttling are implemented in `app/security.py`.
 - Handoff uses a random code, stores a SHA-256 digest, bounds TTL, validates project audience, and uses Redis GETDEL for single-use redemption (`app/handoff.py`, `app/security.py`).
@@ -13,6 +15,9 @@ This gateway handles user-provided provider API credentials and bearer session J
 - Provider exception logs record exception class/status metadata rather than raw provider messages (`app/llm.py`).
 - SQL, file uploads, password auth, RLS and webhook receiver are not present in the gateway service.
 - API keys are supplied via server-side environment variables; provider keys are not included in JWT claims or gateway-generated browser URLs.
+
+## BYOK compatibility and identity activation
+The Gateway's existing encrypted provider-key store, short-lived bearer JWT, `sessionStorage` token handoff and one-time exchange semantics are preserved. No HttpOnly-cookie migration was attempted because it requires a coordinated same-site/BFF change across all apps. The website's Supabase identity attachment is opt-in via `NEXT_PUBLIC_GATEWAY_SUPABASE_IDENTITY_ENABLED=true`; configure both Gateway Supabase variables before enabling the flag. With the flag off, the current guest BYOK flow is unchanged.
 
 ## Important architectural note
 The Gateway returns a short-lived bearer JWT to the calling portfolio frontend. The project README says the portfolio keeps it in sessionStorage; this differs from the checklist strict HttpOnly-cookie requirement. Since project apps must forward the credential for inference, moving this to a cookie requires a coordinated same-site/BFF design across the website and all client apps. Do not unilaterally switch response semantics in this gateway and break BYOK. Avoid localStorage; use short TTL, scoped audience, CSP, no-store responses and server-side handoff.
@@ -34,7 +39,7 @@ The Gateway returns a short-lived bearer JWT to the calling portfolio frontend. 
 |03|CSRF|N/A/PARTIAL — bearer-header API, no cookie auth; revisit if cookie sessions are introduced|
 |04|File upload|N/A — no upload endpoints|
 |05|SSRF|PASS for provider routing — provider destinations are hard-coded SDK endpoints; Gemini remote image URLs are rejected|
-|06|BOLA/IDOR|PARTIAL — session IDs are random and JWT-bound; project handoff validates audience; verify future session operations preserve ownership checks|
+|06|BOLA/IDOR|IMPROVED/PARTIAL — signed sessions contain a server-derived owner scope that is checked against the Redis session record and survives handoff; downstream apps must enforce that scope on their own data|
 |07|Rate limiting|PASS in app — Redis session/IP counters; add edge protection|
 |08|Password hashing|N/A — no passwords|
 |09|MFA|EXTERNAL — enable for provider, GitHub and hosting admins|

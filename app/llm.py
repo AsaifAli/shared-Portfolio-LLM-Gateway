@@ -331,7 +331,10 @@ def _build_openai_kwargs(
     if (
         model_cfg.provider == "openrouter"
         and _provider_model_id(model_cfg)
-        == "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
+        in {
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+            "nvidia/nemotron-3.5-lightning:free",
+        }
     ):
         kwargs["extra_body"] = {"reasoning": {"max_tokens": 1024}}
 

@@ -288,6 +288,71 @@ def owner_scope_for_session(session_id: str) -> str:
     ).hexdigest()
 
 
+_WORKSPACE_CLIENT_ID = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_WORKSPACE_TIMESTAMP = re.compile(r"^[0-9]{10}$")
+_WORKSPACE_SIGNATURE = re.compile(r"^[0-9a-f]{64}$")
+_WORKSPACE_IDENTITY_VERSION = "studio-workspace-v1"
+_WORKSPACE_IDENTITY_MAX_SKEW_SECONDS = 60
+
+
+def workspace_identity_signature_payload(client_id: str, timestamp: str) -> bytes:
+    """Canonical payload shared by the Studio Worker and this Gateway."""
+    return f"{_WORKSPACE_IDENTITY_VERSION}\n{client_id}\n{timestamp}".encode("utf-8")
+
+
+def owner_scope_for_workspace_client(
+    client_id: str,
+    timestamp: str,
+    signature: str,
+) -> str:
+    """Validate a Studio-signed client identity and return its stable owner scope.
+
+    The Workspace access-key ID is never trusted by itself. A short-lived
+    HMAC signed by the Studio Worker proves the identity was resolved from a
+    valid, server-verified workspace session. The provider key and raw access
+    key are not part of this identity assertion.
+    """
+    secret = str(getattr(settings, "workspace_identity_secret", "") or "").strip()
+    if len(secret) < 32:
+        raise HTTPException(
+            status_code=503,
+            detail="Workspace identity binding is not configured on the Gateway.",
+        )
+
+    if (
+        not isinstance(client_id, str)
+        or not _WORKSPACE_CLIENT_ID.fullmatch(client_id)
+        or not isinstance(timestamp, str)
+        or not _WORKSPACE_TIMESTAMP.fullmatch(timestamp)
+        or not isinstance(signature, str)
+        or not _WORKSPACE_SIGNATURE.fullmatch(signature)
+    ):
+        raise HTTPException(status_code=401, detail="Invalid workspace identity assertion.")
+
+    normalized_client_id = client_id.lower()
+    issued_at = int(timestamp)
+    if abs(int(time.time()) - issued_at) > _WORKSPACE_IDENTITY_MAX_SKEW_SECONDS:
+        raise HTTPException(status_code=401, detail="Workspace identity assertion expired.")
+
+    expected_signature = hmac.new(
+        secret.encode("utf-8"),
+        workspace_identity_signature_payload(normalized_client_id, timestamp),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected_signature, signature):
+        raise HTTPException(status_code=401, detail="Invalid workspace identity signature.")
+
+    # A separate purpose string prevents the transport signature from being
+    # reused as the persistent tenant identifier.
+    return hmac.new(
+        secret.encode("utf-8"),
+        f"workspace-owner:{normalized_client_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
 async def verify_supabase_access_token(access_token: str) -> str:
     """Validate a Supabase access token with Auth's /user endpoint.
 

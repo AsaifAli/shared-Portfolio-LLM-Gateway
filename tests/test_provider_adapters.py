@@ -359,3 +359,16 @@ def test_nemotron_openrouter_preset_caps_reasoning_budget_for_visible_output():
     })
 
     assert kwargs["extra_body"] == {"reasoning": {"max_tokens": 1024}}
+
+
+def test_nemotron_35_lightning_openrouter_caps_reasoning_for_visible_output():
+    model = ModelConfig(
+        id="openrouter-nemotron-35-lightning",
+        provider="openrouter",
+        model_id="nvidia/nemotron-3.5-lightning:free",
+    )
+    kwargs = llm._build_openai_kwargs(model, {
+        "messages": [{"role": "user", "content": "Create a concise workflow summary."}],
+    })
+
+    assert kwargs["extra_body"] == {"reasoning": {"max_tokens": 1024}}

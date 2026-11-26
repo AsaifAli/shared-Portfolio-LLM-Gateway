@@ -42,6 +42,7 @@ def configure_valid_production(monkeypatch):
     monkeypatch.setenv("MAX_INPUT_BYTES", "1048576")
     monkeypatch.setenv("MAX_OUTPUT_TOKENS", "4096")
     monkeypatch.setenv("PROVIDER_TIMEOUT_SECONDS", "90")
+    monkeypatch.delenv("WORKSPACE_IDENTITY_SECRET", raising=False)
 
     for name in (
         "FALLBACK_PROVIDER",
@@ -162,3 +163,19 @@ def test_supabase_identity_requires_https_project_origin(monkeypatch):
 
     with pytest.raises(RuntimeError, match="HTTPS project origin"):
         Settings().validate_runtime()
+
+def test_workspace_identity_secret_is_optional_until_workspace_is_enabled(monkeypatch):
+    configure_valid_production(monkeypatch)
+    monkeypatch.delenv("WORKSPACE_IDENTITY_SECRET", raising=False)
+
+    config = Settings()
+    config.validate_runtime()
+    assert config.workspace_identity_secret == ""
+
+
+def test_workspace_identity_secret_rejects_short_values(monkeypatch):
+    configure_valid_production(monkeypatch)
+    monkeypatch.setenv("WORKSPACE_IDENTITY_SECRET", "too-short")
+
+    with pytest.raises(RuntimeError, match="WORKSPACE_IDENTITY_SECRET"):
+        Settings()

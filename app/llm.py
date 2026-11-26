@@ -114,6 +114,28 @@ class ProviderUnavailableError(ProviderError):
         )
 
 
+class ProviderEmptyCompletionError(ProviderError):
+    """A provider returned a nominal success without user-visible output."""
+
+    def __init__(self, finish_reason: str) -> None:
+        if finish_reason == "length":
+            message = (
+                "The selected model exhausted its output-token budget before "
+                "producing visible text. Lower its reasoning effort or increase "
+                "its output-token budget."
+            )
+        else:
+            message = (
+                "The selected model returned no visible text. Retry after "
+                "provider warm-up or choose a different model."
+            )
+        super().__init__(
+            message,
+            status_code=502,
+            code="empty_completion",
+        )
+
+
 def _provider_model_id(model_cfg: ModelConfig) -> str:
     """Strip legacy provider prefixes retained for old MODEL_REGISTRY_JSON."""
     value = model_cfg.model_id.strip()
@@ -292,6 +314,16 @@ def _build_openai_kwargs(
         value = request.get(field)
         if value is not None:
             kwargs[field] = value
+
+    # GPT-OSS is a reasoning model. At the Gateway's default 4k completion
+    # budget, unconstrained reasoning can consume every token and leave the
+    # OpenAI-compatible message.content empty. Keep this preset useful for
+    # application workflows by reserving most of the budget for visible output.
+    if (
+        model_cfg.provider == "openrouter"
+        and _provider_model_id(model_cfg) == "openai/gpt-oss-20b:free"
+    ):
+        kwargs["extra_body"] = {"reasoning": {"effort": "low"}}
 
     if model_cfg.provider == "anthropic":
         response_format = request.get("response_format")
@@ -743,6 +775,71 @@ def _gemini_chunk_payload(chunk: Any, *, model: str, stream_id: str, created: in
     }
 
 
+def _response_field(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _has_visible_text(content: Any) -> bool:
+    if isinstance(content, str):
+        return bool(content.strip())
+    if not isinstance(content, list):
+        return False
+    for part in content:
+        if isinstance(part, str) and part.strip():
+            return True
+        text_value = _response_field(part, "text")
+        if isinstance(text_value, str) and text_value.strip():
+            part_type = _response_field(part, "type")
+            if part_type in {None, "text", "output_text"}:
+                return True
+    return False
+
+
+def _validate_completion_response(response: Any, model_cfg: ModelConfig) -> None:
+    """Reject 200-style provider responses that contain no usable completion."""
+    choices = _response_field(response, "choices") or []
+    choice = choices[0] if choices else None
+    message = _response_field(choice, "message") if choice is not None else None
+    content = _response_field(message, "content") if message is not None else None
+    tool_calls = _response_field(message, "tool_calls") or [] if message is not None else []
+    refusal = _response_field(message, "refusal") if message is not None else None
+
+    # Tool calls and refusals are valid structured completions. The downstream
+    # app can decide whether it supports those response types.
+    if _has_visible_text(content) or tool_calls or refusal:
+        return
+
+    finish_reason = str(_response_field(choice, "finish_reason") or "unknown").lower()
+    if finish_reason not in {
+        "stop", "length", "tool_calls", "content_filter", "function_call", "unknown"
+    }:
+        finish_reason = "other"
+
+    usage = _response_field(response, "usage")
+    completion_details = _response_field(usage, "completion_tokens_details")
+    completion_tokens = _response_field(usage, "completion_tokens")
+    reasoning_tokens = _response_field(completion_details, "reasoning_tokens")
+    reasoning_present = bool(
+        _response_field(message, "reasoning")
+        or _response_field(message, "reasoning_content")
+    )
+
+    logger.warning(
+        "Provider returned no visible completion: provider=%s model=%s response_model=%s "
+        "finish_reason=%s completion_tokens=%s reasoning_tokens=%s reasoning_present=%s",
+        model_cfg.provider,
+        model_cfg.model_id,
+        str(_response_field(response, "model") or "unknown")[:160],
+        finish_reason,
+        completion_tokens if isinstance(completion_tokens, (int, float)) else "unknown",
+        reasoning_tokens if isinstance(reasoning_tokens, (int, float)) else "unknown",
+        reasoning_present,
+    )
+    raise ProviderEmptyCompletionError(finish_reason)
+
+
 async def complete(
     model_cfg: ModelConfig,
     api_key: str,
@@ -763,7 +860,9 @@ async def complete(
                     config=config,
                 ),
             )
-            return _gemini_response(response, _provider_model_id(model_cfg))
+            result = _gemini_response(response, _provider_model_id(model_cfg))
+            _validate_completion_response(result, model_cfg)
+            return result
         finally:
             await _close_gemini_clients(client, async_client)
 
@@ -774,6 +873,7 @@ async def complete(
             model_cfg.provider,
             lambda: client.chat.completions.create(**kwargs),
         )
+        _validate_completion_response(response, model_cfg)
         return response
     finally:
         await client.close()

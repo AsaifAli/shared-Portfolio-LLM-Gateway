@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 import types as pytypes
@@ -285,3 +286,63 @@ def test_anthropic_new_models_only_receive_default_sampling():
     })
     assert "temperature" not in kwargs
     assert "top_p" not in kwargs
+
+
+
+def test_gpt_oss_openrouter_preset_uses_low_reasoning_effort_by_default():
+    model = ModelConfig(
+        id="openrouter-default",
+        provider="openrouter",
+        model_id="openai/gpt-oss-20b:free",
+    )
+    kwargs = llm._build_openai_kwargs(model, {
+        "messages": [{"role": "user", "content": "Create a short project update."}],
+    })
+
+    assert kwargs["extra_body"] == {"reasoning": {"effort": "low"}}
+
+
+def test_empty_provider_completion_is_rejected_before_success_response(monkeypatch):
+    model = ModelConfig(
+        id="openrouter-default",
+        provider="openrouter",
+        model_id="openai/gpt-oss-20b:free",
+    )
+    response = SimpleNamespace(
+        model="openai/gpt-oss-20b:free",
+        choices=[SimpleNamespace(
+            message=SimpleNamespace(content=None, tool_calls=None, refusal=None, reasoning="internal only"),
+            finish_reason="length",
+        )],
+        usage=SimpleNamespace(
+            completion_tokens=4096,
+            completion_tokens_details=SimpleNamespace(reasoning_tokens=4096),
+        ),
+    )
+    captured = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return response
+
+    class FakeClient:
+        chat = SimpleNamespace(completions=FakeCompletions())
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(llm, "_openai_client", lambda *_args: FakeClient())
+
+    with pytest.raises(llm.ProviderEmptyCompletionError) as error:
+        asyncio.run(llm.complete(
+            model,
+            "provider-key-never-logged",
+            {"messages": [{"role": "user", "content": "Create a short project update."}]},
+        ))
+
+    assert error.value.status_code == 502
+    assert error.value.code == "empty_completion"
+    assert "output-token budget" in str(error.value)
+    assert "provider-key-never-logged" not in str(error.value)
+    assert captured["extra_body"] == {"reasoning": {"effort": "low"}}

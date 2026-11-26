@@ -269,6 +269,14 @@ class Settings:
             "",
         ).strip()
 
+        # Optional signed identity from the Studio's client-key workspace.
+        # When configured, each issued workspace client receives a stable
+        # owner scope across provider reconnects without collecting email.
+        self.workspace_identity_secret = os.getenv(
+            "WORKSPACE_IDENTITY_SECRET",
+            "",
+        ).strip()
+
         # Optional server-side fallback provider configuration.
         self.fallback_provider = os.getenv(
             "FALLBACK_PROVIDER",
@@ -526,6 +534,8 @@ class Settings:
         self._validate_encryption_key()
         self._validate_redis_configuration()
         self._validate_supabase_configuration()
+        if self.workspace_identity_secret and len(self.workspace_identity_secret) < 32:
+            raise RuntimeError("WORKSPACE_IDENTITY_SECRET must be at least 32 characters")
         self._validate_fallback_configuration()
 
         # Production must use persistent, encrypted infrastructure.

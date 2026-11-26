@@ -26,3 +26,6 @@ services:
 
       - key: CORS_ORIGINS
         sync: false
+
+      - key: WORKSPACE_IDENTITY_SECRET
+        sync: false

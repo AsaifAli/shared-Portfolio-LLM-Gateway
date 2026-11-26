@@ -421,3 +421,141 @@ def test_supabase_identity_url_validation_rejects_arbitrary_hosts():
     )
     with pytest.raises(RuntimeError, match="HTTPS project origin"):
         Settings._validate_supabase_configuration(settings)
+
+def _workspace_identity_headers(client_id: str, secret: str) -> dict[str, str]:
+    import hashlib
+    import hmac
+    import time
+
+    timestamp = str(int(time.time()))
+    payload = f"studio-workspace-v1\\n{client_id}\\n{timestamp}".encode()
+    signature = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+    return {
+        "X-Studio-Workspace-Client-Id": client_id,
+        "X-Studio-Workspace-Timestamp": timestamp,
+        "X-Studio-Workspace-Signature": signature,
+    }
+
+
+def test_workspace_client_sessions_keep_a_stable_owner_scope(monkeypatch):
+    import uuid
+    import app.main as main_module
+
+    secret = "workspace-identity-secret-" + "x" * 48
+    monkeypatch.setattr(main_module.settings, "workspace_identity_secret", secret)
+    client_id = str(uuid.uuid4())
+
+    first = client.post(
+        "/v1/demo/session",
+        headers=_workspace_identity_headers(client_id, secret),
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+            "ttl_seconds": 600,
+        },
+    )
+    second = client.post(
+        "/v1/demo/session",
+        headers=_workspace_identity_headers(client_id, secret),
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+            "ttl_seconds": 600,
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    first_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {first.json()['access_token']}"},
+    )
+    second_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {second.json()['access_token']}"},
+    )
+    assert first_status.status_code == second_status.status_code == 200
+    assert first_status.json()["owner_scope"] == second_status.json()["owner_scope"]
+
+
+def test_workspace_client_sessions_are_isolated_from_each_other(monkeypatch):
+    import uuid
+    import app.main as main_module
+
+    secret = "workspace-identity-secret-" + "x" * 48
+    monkeypatch.setattr(main_module.settings, "workspace_identity_secret", secret)
+
+    scopes = []
+    for _ in range(2):
+        client_id = str(uuid.uuid4())
+        response = client.post(
+            "/v1/demo/session",
+            headers=_workspace_identity_headers(client_id, secret),
+            json={
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "api_key": "test-api-key-123456",
+                "project": "portfolio",
+                "ttl_seconds": 600,
+            },
+        )
+        assert response.status_code == 200
+        status = client.get(
+            "/v1/demo/session/status",
+            headers={"Authorization": f"Bearer {response.json()['access_token']}"},
+        )
+        assert status.status_code == 200
+        scopes.append(status.json()["owner_scope"])
+
+    assert scopes[0] != scopes[1]
+
+
+def test_workspace_identity_headers_are_rejected_when_signature_is_invalid(monkeypatch):
+    import uuid
+    import app.main as main_module
+
+    secret = "workspace-identity-secret-" + "x" * 48
+    monkeypatch.setattr(main_module.settings, "workspace_identity_secret", secret)
+    client_id = str(uuid.uuid4())
+    headers = _workspace_identity_headers(client_id, secret)
+    headers["X-Studio-Workspace-Signature"] = "0" * 64
+
+    response = client.post(
+        "/v1/demo/session",
+        headers=headers,
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+        },
+    )
+    assert response.status_code == 401
+
+
+def test_workspace_identity_cannot_be_combined_with_supabase_identity(monkeypatch):
+    import uuid
+    import app.main as main_module
+
+    secret = "workspace-identity-secret-" + "x" * 48
+    monkeypatch.setattr(main_module.settings, "workspace_identity_secret", secret)
+    headers = _workspace_identity_headers(str(uuid.uuid4()), secret)
+    headers["Authorization"] = "Bearer supabase-token"
+
+    response = client.post(
+        "/v1/demo/session",
+        headers=headers,
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+        },
+    )
+    assert response.status_code == 400
+

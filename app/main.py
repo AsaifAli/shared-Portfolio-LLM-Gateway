@@ -44,6 +44,7 @@ from .security import (
     new_session_id,
     owner_scope_for_session,
     owner_scope_for_user,
+    owner_scope_for_workspace_client,
     verify_supabase_access_token,
     store,
     SessionStoreUnavailable,
@@ -356,13 +357,43 @@ async def create_session(
     ):
         raise HTTPException(status_code=401, detail="Invalid Supabase authorization header")
 
-    if auth_parts:
+    workspace_client_id = request.headers.get("x-studio-workspace-client-id", "")
+    workspace_timestamp = request.headers.get("x-studio-workspace-timestamp", "")
+    workspace_signature = request.headers.get("x-studio-workspace-signature", "")
+    workspace_identity_values = (
+        workspace_client_id,
+        workspace_timestamp,
+        workspace_signature,
+    )
+    has_workspace_identity = any(workspace_identity_values)
+
+    if has_workspace_identity and not all(workspace_identity_values):
+        raise HTTPException(status_code=401, detail="Incomplete workspace identity assertion")
+
+    if auth_parts and has_workspace_identity:
+        raise HTTPException(
+            status_code=400,
+            detail="Use either a verified Supabase identity or a signed workspace identity, not both.",
+        )
+
+    if has_workspace_identity:
+        if payload.project.strip().lower() != "portfolio":
+            raise HTTPException(
+                status_code=400,
+                detail="Workspace identity can only create a portfolio BYOK session.",
+            )
+        owner_scope = owner_scope_for_workspace_client(
+            workspace_client_id,
+            workspace_timestamp,
+            workspace_signature,
+        )
+    elif auth_parts:
         # A supplied identity token must validate; never silently downgrade an
         # expired/invalid authenticated request into an anonymous BYOK scope.
         supabase_user_id = await verify_supabase_access_token(auth_parts[1])
         owner_scope = owner_scope_for_user(supabase_user_id)
     else:
-        # Backward-compatible anonymous BYOK uses a per-session scope.
+        # Public Technical Lab BYOK remains anonymous and per-session scoped.
         owner_scope = owner_scope_for_session(sid)
 
     record = {

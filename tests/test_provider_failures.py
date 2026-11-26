@@ -105,7 +105,16 @@ def test_complete_retries_connection_failure_before_returning(monkeypatch):
         calls += 1
         if calls == 1:
             raise ConnectionError("network details must not leak")
-        return {"ok": True, "model": kwargs["model"]}
+        return {
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "model": kwargs["model"],
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "recovered"},
+                "finish_reason": "stop",
+            }],
+        }
 
     fake_client = FakeClient(create)
     monkeypatch.setattr(llm, "_openai_client", lambda *_args: fake_client)
@@ -113,7 +122,7 @@ def test_complete_retries_connection_failure_before_returning(monkeypatch):
     monkeypatch.setattr(llm.asyncio, "sleep", lambda _seconds: _no_sleep())
 
     result = asyncio.run(complete(OPENROUTER_MODEL, "dummy-key", REQUEST))
-    assert result["ok"] is True
+    assert result["choices"][0]["message"]["content"] == "recovered"
     assert result["model"] == "openai/gpt-oss-20b:free"
     assert calls == 2
     assert fake_client.closed is True

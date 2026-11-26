@@ -346,3 +346,16 @@ def test_empty_provider_completion_is_rejected_before_success_response(monkeypat
     assert "output-token budget" in str(error.value)
     assert "provider-key-never-logged" not in str(error.value)
     assert captured["extra_body"] == {"reasoning": {"effort": "low"}}
+
+
+def test_nemotron_openrouter_preset_caps_reasoning_budget_for_visible_output():
+    model = ModelConfig(
+        id="openrouter-default",
+        provider="openrouter",
+        model_id="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    )
+    kwargs = llm._build_openai_kwargs(model, {
+        "messages": [{"role": "user", "content": "Create a concise business workflow update."}],
+    })
+
+    assert kwargs["extra_body"] == {"reasoning": {"max_tokens": 1024}}

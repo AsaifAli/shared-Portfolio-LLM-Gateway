@@ -36,6 +36,14 @@ User-selected provider/model
 
 Provider API keys are not placed in JWT claims, browser storage, URLs, or project source code. The studio website proxies Gateway session creation, status and revocation through same-origin server routes; the Gateway bearer stays in a path-scoped HttpOnly cookie and the browser receives only non-sensitive provider/model/expiry metadata. Only a random, project-bound, single-use code is passed to a demo application's URL. The receiving app removes that code immediately and exchanges it server-side. Handoff codes expire after 60 seconds and are atomically consumed once. Other client applications must keep any Gateway bearer short-lived and session-scoped; never put it in localStorage.
 
+### Stable client workspace identity
+
+The Studio Client Workspace uses individually issued, non-email access keys. When a signed workspace identity assertion is present on BYOK session creation, the Gateway verifies a short-lived HMAC from the trusted Studio Worker and assigns a stable owner scope derived from that client record. Multiple BYOK sessions for the same client therefore retain the same application-data tenant scope, while different client records remain isolated.
+
+The assertion carries only the opaque workspace access-key record ID and a timestamp. It does not contain the raw client access key, provider credential or email address. It is accepted only with `WORKSPACE_IDENTITY_SECRET`, expires after 60 seconds, and is restricted to `project=portfolio`. Requests without the assertion retain the existing per-session anonymous scope; the optional Supabase Auth identity flow remains available for other trusted contexts.
+
+Configure the **same random secret** on the existing Studio Cloudflare Worker as `WORKSPACE_GATEWAY_IDENTITY_SECRET` and on this Gateway service as `WORKSPACE_IDENTITY_SECRET`. Generate it with `openssl rand -hex 32`, store it only as a secret in both hosting providers, and never commit it. Keep it stable: rotating it changes derived tenant scopes and requires a deliberate owner-scope migration.
+
 ### Demo stability
 
 The hosted portfolio gateway is tuned for multi-step agent workflows rather than only single chat requests:

@@ -325,6 +325,16 @@ def _build_openai_kwargs(
     ):
         kwargs["extra_body"] = {"reasoning": {"effort": "low"}}
 
+    # Nemotron's reasoning preset can exhaust the Gateway's 4k completion
+    # budget before returning user-visible text. Cap the internal reasoning
+    # share so structured workflow outputs retain tokens for the answer.
+    if (
+        model_cfg.provider == "openrouter"
+        and _provider_model_id(model_cfg)
+        == "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
+    ):
+        kwargs["extra_body"] = {"reasoning": {"max_tokens": 1024}}
+
     if model_cfg.provider == "anthropic":
         response_format = request.get("response_format")
         if response_format and (

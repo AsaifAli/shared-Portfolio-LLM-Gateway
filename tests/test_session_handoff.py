@@ -707,3 +707,79 @@ def test_workspace_delegated_project_token_is_valid_without_studio_assertion(mon
     assert payload["project"] == "quotesense"
     assert payload["session_project"] == "portfolio"
     assert payload["owner_scope"] == exchanged.json()["owner_scope"]
+
+
+def test_workspace_product_sessions_are_isolated_and_revoked_independently(monkeypatch):
+    import uuid
+
+    secret = "workspace-identity-secret-" + "x" * 48
+    monkeypatch.setattr(main_module.settings, "workspace_identity_secret", secret)
+    client_id = str(uuid.uuid4())
+    identity = _workspace_identity_headers(client_id, secret)
+
+    created = client.post(
+        "/v1/demo/session",
+        headers=identity,
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+            "ttl_seconds": 600,
+        },
+    )
+    assert created.status_code == 200
+    parent_token = created.json()["access_token"]
+
+    issued_tokens = {}
+    for project in ("quotesense", "flowpilot"):
+        issued = client.post(
+            "/v1/demo/session/handoff",
+            headers={**_workspace_identity_headers(client_id, secret),
+                     "Authorization": f"Bearer {parent_token}"},
+            json={"project": project},
+        )
+        assert issued.status_code == 200
+        exchanged = client.post(
+            "/v1/demo/session/exchange",
+            headers=_workspace_identity_headers(client_id, secret),
+            json={"code": issued.json()["code"], "project": project},
+        )
+        assert exchanged.status_code == 200
+        issued_tokens[project] = exchanged.json()["access_token"]
+
+    quote_claims = decode_jwt(issued_tokens["quotesense"])
+    flow_claims = decode_jwt(issued_tokens["flowpilot"])
+    assert quote_claims["sid"] != flow_claims["sid"]
+    assert quote_claims["owner_scope"] == flow_claims["owner_scope"]
+
+    for project, token in issued_tokens.items():
+        status = client.get(
+            "/v1/demo/session/status",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert status.status_code == 200
+        assert status.json()["project"] == project
+
+    revoked = client.post(
+        "/v1/demo/session/revoke",
+        headers={"Authorization": f"Bearer {issued_tokens['quotesense']}"},
+    )
+    assert revoked.status_code == 200
+
+    quote_after_revoke = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {issued_tokens['quotesense']}"},
+    )
+    flow_after_quote_revoke = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {issued_tokens['flowpilot']}"},
+    )
+    parent_after_quote_revoke = client.get(
+        "/v1/demo/session/status",
+        headers={**_workspace_identity_headers(client_id, secret),
+                 "Authorization": f"Bearer {parent_token}"},
+    )
+    assert quote_after_revoke.status_code == 401
+    assert flow_after_quote_revoke.status_code == 200
+    assert parent_after_quote_revoke.status_code == 200

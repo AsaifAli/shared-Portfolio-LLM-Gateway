@@ -651,3 +651,59 @@ def test_workspace_handoff_is_bound_to_the_verified_workspace_identity(monkeypat
         headers={**headers_a, "Authorization": f"Bearer {token}"},
     )
     assert revoke_for_owner.status_code == 200
+
+
+
+def test_workspace_delegated_project_token_is_valid_without_studio_assertion(monkeypatch):
+    """Project JWTs prove a Studio-verified single-use handoff and must work in product APIs."""
+    import uuid
+
+    secret = "workspace-identity-secret-" + "x" * 48
+    monkeypatch.setattr(main_module.settings, "workspace_identity_secret", secret)
+    client_id = str(uuid.uuid4())
+    identity_headers = _workspace_identity_headers(client_id, secret)
+
+    created = client.post(
+        "/v1/demo/session",
+        headers=identity_headers,
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+            "ttl_seconds": 600,
+        },
+    )
+    assert created.status_code == 200
+    parent_token = created.json()["access_token"]
+
+    parent_without_identity = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {parent_token}"},
+    )
+    assert parent_without_identity.status_code == 401
+
+    issued = client.post(
+        "/v1/demo/session/handoff",
+        headers={**identity_headers, "Authorization": f"Bearer {parent_token}"},
+        json={"project": "quotesense"},
+    )
+    assert issued.status_code == 200
+
+    exchanged = client.post(
+        "/v1/demo/session/exchange",
+        headers=identity_headers,
+        json={"code": issued.json()["code"], "project": "quotesense"},
+    )
+    assert exchanged.status_code == 200
+    project_token = exchanged.json()["access_token"]
+
+    project_status = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {project_token}"},
+    )
+    assert project_status.status_code == 200
+    payload = project_status.json()
+    assert payload["project"] == "quotesense"
+    assert payload["session_project"] == "portfolio"
+    assert payload["owner_scope"] == exchanged.json()["owner_scope"]

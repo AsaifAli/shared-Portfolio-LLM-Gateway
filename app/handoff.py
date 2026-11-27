@@ -94,6 +94,7 @@ async def issue_session_handoff(
         "owner_scope": owner_scope,
         "target_project": target_project,
         "session_expires_at": session_expires_at,
+        "workspace_identity_bound": session.get("workspace_identity_bound") is True,
     }
 
     await store.set(
@@ -108,6 +109,8 @@ async def issue_session_handoff(
 async def exchange_session_handoff(
     code: str,
     target_project: str,
+    *,
+    expected_owner_scope: str | None = None,
 ) -> SessionExchangeResponse:
     """Atomically redeem a project-bound handoff code for a session JWT."""
     if target_project not in ALLOWED_HANDOFF_PROJECTS:
@@ -139,6 +142,18 @@ async def exchange_session_handoff(
             detail="Invalid, expired, or already used handoff code",
         )
 
+    workspace_identity_bound = handoff.get("workspace_identity_bound") is True
+    handoff_owner_scope = handoff.get("owner_scope")
+    if workspace_identity_bound:
+        if (
+            not isinstance(expected_owner_scope, str)
+            or not isinstance(handoff_owner_scope, str)
+            or not secrets.compare_digest(expected_owner_scope, handoff_owner_scope)
+        ):
+            raise HTTPException(status_code=401, detail="Handoff belongs to a different workspace.")
+    elif expected_owner_scope is not None:
+        raise HTTPException(status_code=401, detail="Invalid workspace handoff.")
+
     # GETDEL is atomic in Redis: only one concurrent request can win.
     consumed = await store.consume(key)
     if consumed is None or consumed != raw:
@@ -165,6 +180,9 @@ async def exchange_session_handoff(
 
     if not isinstance(session, dict):
         raise HTTPException(status_code=401, detail="Invalid demo session")
+
+    if (session.get("workspace_identity_bound") is True) != workspace_identity_bound:
+        raise HTTPException(status_code=401, detail="Invalid demo session.")
 
     expected_fields = {
         "sid": "sid",

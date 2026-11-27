@@ -178,4 +178,4 @@ def test_workspace_identity_secret_rejects_short_values(monkeypatch):
     monkeypatch.setenv("WORKSPACE_IDENTITY_SECRET", "too-short")
 
     with pytest.raises(RuntimeError, match="WORKSPACE_IDENTITY_SECRET"):
-        Settings()
+        Settings().validate_runtime()

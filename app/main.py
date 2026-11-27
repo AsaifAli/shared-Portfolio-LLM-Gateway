@@ -402,6 +402,7 @@ async def create_session(
         "model": payload.model,
         "project": payload.project,
         "owner_scope": owner_scope,
+        "workspace_identity_bound": has_workspace_identity,
         "allow_custom_model": payload.allow_custom_model,
         "credential": encrypt_secret(api_key),
         "created_at": int(time.time()),
@@ -479,9 +480,23 @@ async def exchange_handoff(
         request.client.host if request.client else "unknown"
     )
 
+    identity_headers = (
+        request.headers.get("x-studio-workspace-client-id", ""),
+        request.headers.get("x-studio-workspace-timestamp", ""),
+        request.headers.get("x-studio-workspace-signature", ""),
+    )
+    has_identity = any(identity_headers)
+    if has_identity and not all(identity_headers):
+        raise HTTPException(status_code=401, detail="Incomplete workspace identity assertion.")
+
+    expected_owner_scope = None
+    if has_identity:
+        expected_owner_scope = owner_scope_for_workspace_client(*identity_headers)
+
     return await exchange_session_handoff(
         payload.code,
         payload.project,
+        expected_owner_scope=expected_owner_scope,
     )
 
 

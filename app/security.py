@@ -621,6 +621,16 @@ async def load_session_context(
             status_code=401,
             detail="Invalid demo session",
         )
+
+    if record.get("workspace_identity_bound") is True:
+        expected_scope = owner_scope_for_workspace_client(
+            request.headers.get("x-studio-workspace-client-id", ""),
+            request.headers.get("x-studio-workspace-timestamp", ""),
+            request.headers.get("x-studio-workspace-signature", ""),
+        )
+        if not hmac.compare_digest(expected_scope, stored_scope):
+            raise HTTPException(status_code=401, detail="Demo session belongs to a different workspace.")
+
     payload["owner_scope"] = owner_scope
     record["owner_scope"] = stored_scope
 

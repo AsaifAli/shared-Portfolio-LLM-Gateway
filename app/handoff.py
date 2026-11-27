@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from .config import ALLOWED_HANDOFF_PROJECTS, settings
 from .models import SessionExchangeResponse
-from .security import create_jwt, owner_scope_for_session, store
+from .security import create_jwt, new_session_id, owner_scope_for_session, store
 
 
 HANDOFF_CODE_TTL_SECONDS = 60
@@ -213,8 +213,34 @@ async def exchange_session_handoff(
     if ttl <= 0:
         raise HTTPException(status_code=401, detail="Demo session expired")
 
+    credential = session.get("credential")
+    if not isinstance(credential, str) or not credential:
+        raise HTTPException(status_code=401, detail="Invalid demo session")
+
+    # Give every product a distinct Gateway session ID. The encrypted provider
+    # credential and stable owner scope are copied server-side, while the
+    # short-lived project JWT is independent and can be revoked without
+    # invalidating the portfolio session or another product's session.
+    child_sid = new_session_id()
+    child_session = {
+        "sid": child_sid,
+        "provider": session["provider"],
+        "model": session["model"],
+        "project": session["project"],
+        "owner_scope": owner_scope,
+        "workspace_identity_bound": False,
+        "allow_custom_model": session.get("allow_custom_model", False),
+        "credential": credential,
+        "created_at": int(time.time()),
+    }
+    await store.set(
+        f"llm:session:{child_sid}",
+        json.dumps(child_session, separators=(",", ":")),
+        ttl,
+    )
+
     access_token = create_jwt(
-        session["sid"],
+        child_sid,
         session["provider"],
         session["model"],
         target_project,

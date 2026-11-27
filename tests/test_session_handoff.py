@@ -238,7 +238,6 @@ def test_unauthenticated_byoK_sessions_are_isolated_by_owner_scope():
 
 
 def test_supabase_authenticated_sessions_share_owner_scope(monkeypatch):
-    import app.main as main_module
 
     user_id = "8cce3a1c-4f9f-4f42-9cbd-e77efed3a619"
 
@@ -286,7 +285,6 @@ def test_supabase_authenticated_sessions_share_owner_scope(monkeypatch):
 
 
 def test_invalid_supabase_bearer_does_not_downgrade_to_anonymous(monkeypatch):
-    import app.main as main_module
     from fastapi import HTTPException
 
     async def reject(_token):
@@ -439,7 +437,6 @@ def _workspace_identity_headers(client_id: str, secret: str) -> dict[str, str]:
 
 def test_workspace_client_sessions_keep_a_stable_owner_scope(monkeypatch):
     import uuid
-    import app.main as main_module
 
     secret = "workspace-identity-secret-" + "x" * 48
     monkeypatch.setattr(main_module.settings, "workspace_identity_secret", secret)
@@ -485,7 +482,6 @@ def test_workspace_client_sessions_keep_a_stable_owner_scope(monkeypatch):
 
 def test_workspace_client_sessions_are_isolated_from_each_other(monkeypatch):
     import uuid
-    import app.main as main_module
 
     secret = "workspace-identity-secret-" + "x" * 48
     monkeypatch.setattr(main_module.settings, "workspace_identity_secret", secret)
@@ -517,7 +513,6 @@ def test_workspace_client_sessions_are_isolated_from_each_other(monkeypatch):
 
 def test_workspace_identity_headers_are_rejected_when_signature_is_invalid(monkeypatch):
     import uuid
-    import app.main as main_module
 
     secret = "workspace-identity-secret-" + "x" * 48
     monkeypatch.setattr(main_module.settings, "workspace_identity_secret", secret)
@@ -540,7 +535,6 @@ def test_workspace_identity_headers_are_rejected_when_signature_is_invalid(monke
 
 def test_workspace_identity_cannot_be_combined_with_supabase_identity(monkeypatch):
     import uuid
-    import app.main as main_module
 
     secret = "workspace-identity-secret-" + "x" * 48
     monkeypatch.setattr(main_module.settings, "workspace_identity_secret", secret)
@@ -559,3 +553,99 @@ def test_workspace_identity_cannot_be_combined_with_supabase_identity(monkeypatc
     )
     assert response.status_code == 400
 
+
+
+def _workspace_identity_headers(client_id: str, secret: str) -> dict[str, str]:
+    import hashlib
+    import hmac
+    import time
+
+    timestamp = str(int(time.time()))
+    payload = f"studio-workspace-v1\n{client_id}\n{timestamp}".encode()
+    signature = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+    return {
+        "X-Studio-Workspace-Client-Id": client_id,
+        "X-Studio-Workspace-Timestamp": timestamp,
+        "X-Studio-Workspace-Signature": signature,
+    }
+
+
+def test_workspace_handoff_is_bound_to_the_verified_workspace_identity(monkeypatch):
+    import uuid
+    from app.config import settings
+
+    secret = "workspace-identity-secret-" + "x" * 48
+    monkeypatch.setattr(settings, "workspace_identity_secret", secret)
+    client_a = str(uuid.uuid4())
+    client_b = str(uuid.uuid4())
+    headers_a = _workspace_identity_headers(client_a, secret)
+    headers_b = _workspace_identity_headers(client_b, secret)
+
+    created = client.post(
+        "/v1/demo/session",
+        headers=headers_a,
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key": "test-api-key-123456",
+            "project": "portfolio",
+            "ttl_seconds": 600,
+        },
+    )
+    assert created.status_code == 200
+    token = created.json()["access_token"]
+
+    status_without_identity = client.get(
+        "/v1/demo/session/status",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert status_without_identity.status_code == 401
+
+    status_for_owner = client.get(
+        "/v1/demo/session/status",
+        headers={**headers_a, "Authorization": f"Bearer {token}"},
+    )
+    assert status_for_owner.status_code == 200
+
+    handoff = client.post(
+        "/v1/demo/session/handoff",
+        headers={**headers_a, "Authorization": f"Bearer {token}"},
+        json={"project": "quotesense"},
+    )
+    assert handoff.status_code == 200
+    code = handoff.json()["code"]
+
+    exchange_without_identity = client.post(
+        "/v1/demo/session/exchange",
+        json={"code": code, "project": "quotesense"},
+    )
+    assert exchange_without_identity.status_code == 401
+
+    exchange_for_other_owner = client.post(
+        "/v1/demo/session/exchange",
+        headers=headers_b,
+        json={"code": code, "project": "quotesense"},
+    )
+    assert exchange_for_other_owner.status_code == 401
+
+    exchange_for_owner = client.post(
+        "/v1/demo/session/exchange",
+        headers=headers_a,
+        json={"code": code, "project": "quotesense"},
+    )
+    assert exchange_for_owner.status_code == 200
+    claims = decode_jwt(exchange_for_owner.json()["access_token"])
+    assert claims["project"] == "quotesense"
+    assert claims["session_project"] == "portfolio"
+
+    revoke_without_identity = client.post(
+        "/v1/demo/session/revoke",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert revoke_without_identity.status_code == 401
+
+    revoke_for_owner = client.post(
+        "/v1/demo/session/revoke",
+        headers={**headers_a, "Authorization": f"Bearer {token}"},
+    )
+    assert revoke_for_owner.status_code == 200

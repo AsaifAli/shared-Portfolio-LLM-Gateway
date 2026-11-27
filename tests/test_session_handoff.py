@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+import app.main as main_module
 from app.main import app
 from app.security import decode_jwt, store
 
@@ -470,11 +471,11 @@ def test_workspace_client_sessions_keep_a_stable_owner_scope(monkeypatch):
 
     first_status = client.get(
         "/v1/demo/session/status",
-        headers={"Authorization": f"Bearer {first.json()['access_token']}"},
+        headers={**_workspace_identity_headers(client_id, secret), "Authorization": f"Bearer {first.json()['access_token']}"},
     )
     second_status = client.get(
         "/v1/demo/session/status",
-        headers={"Authorization": f"Bearer {second.json()['access_token']}"},
+        headers={**_workspace_identity_headers(client_id, secret), "Authorization": f"Bearer {second.json()['access_token']}"},
     )
     assert first_status.status_code == second_status.status_code == 200
     assert first_status.json()["owner_scope"] == second_status.json()["owner_scope"]
@@ -489,9 +490,10 @@ def test_workspace_client_sessions_are_isolated_from_each_other(monkeypatch):
     scopes = []
     for _ in range(2):
         client_id = str(uuid.uuid4())
+        identity_headers = _workspace_identity_headers(client_id, secret)
         response = client.post(
             "/v1/demo/session",
-            headers=_workspace_identity_headers(client_id, secret),
+            headers=identity_headers,
             json={
                 "provider": "openai",
                 "model": "gpt-4o-mini",
@@ -503,7 +505,7 @@ def test_workspace_client_sessions_are_isolated_from_each_other(monkeypatch):
         assert response.status_code == 200
         status = client.get(
             "/v1/demo/session/status",
-            headers={"Authorization": f"Bearer {response.json()['access_token']}"},
+            headers={**_workspace_identity_headers(client_id, secret), "Authorization": f"Bearer {response.json()['access_token']}"},
         )
         assert status.status_code == 200
         scopes.append(status.json()["owner_scope"])
